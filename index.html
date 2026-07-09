@@ -670,7 +670,7 @@ const firebaseConfig = {
 /* Poolens id i databasen. Byt om du kör flera pooler parallellt. */
 const POOL_ID = "vm2026";
 
-const ONLINE = !!FIREBASE_CONFIG.apiKey;
+const ONLINE = !!firebaseConfig.apiKey;
 let fb = null;   // firestore + auth helpers
 let uid = null;  // anonymt uid
 
@@ -682,7 +682,7 @@ async function initFirebase(){
     import(`${V}/firebase-firestore.js`),
     import(`${V}/firebase-auth.js`)
   ]);
-  const app  = initializeApp(FIREBASE_CONFIG);
+  const app  = initializeApp(firebaseConfig);
   const db   = fs.getFirestore(app);
   const auth = au.getAuth(app);
   // logga in anonymt (osynligt för användaren)
