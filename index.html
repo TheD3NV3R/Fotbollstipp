@@ -575,7 +575,8 @@
 
     <div class="card">
       <h2><span class="n">4</span> Slutspel <span class="badge">valfritt</span></h2>
-      <p class="hint">Lägg in slutspelsmatcherna när gruppspelet är avgjort. Välj lagen i rullistorna – de fylls med alla lag från gruppspelet. Deltagarna tippar dem sedan i fliken <b>Slutspel</b>.</p>
+      <p class="hint">Lägg in slutspelsmatcherna när gruppspelet är avgjort. Välj lagen i rullistorna – de fylls med alla lag från gruppspelet. Lägg in tidigare rundor (t.ex. sextondelsfinaler) först: då kan du länka senare matcher till <b>"Vinnare av match X"</b> istället för att skriva in ett lag direkt – laget uppdateras då automatiskt när resultatet fylls i under Resultat-fliken, och deltagarna tippar hela slutspelsträdet utifrån vilka lag de tror går vidare.</p>
+      <p class="hint">Vid straffavgörande: skriv in slutresultatet med en extra målskillnad till det lag som vann på straffar, annars kan appen inte avgöra vem som gick vidare.</p>
       <div id="koEditor"></div>
       <div class="btnbar">
         <button class="btn ghost sm" id="addKo">+ Lägg till match</button>
@@ -747,20 +748,46 @@ function allTeams(){
   return t.sort((a,b)=>a.localeCompare(b,'sv'));
 }
 /* Visningsnamn för en slutspelsdeltagare.
-   Nya format: riktigt lagnamn. Gammalt format: koder (V:A, W:73). */
-function koSide(m, side){
+   homeTeam/awayTeam = manuellt inskrivet lag (t.ex. sextondelsfinaler,
+   där lagen kommer direkt från gruppspelet).
+   home/away = länk till en tidigare match, "W:<nr>" (vinnare) eller
+   "L:<nr>" (förlorare, t.ex. till en bronsmatch). Länken slås upp mot
+   `ctx` (results för det officiella facit-slutspelet, eller en spelares
+   egna tips för deras personliga slutspelsgissning) så att nästa runda
+   uppdateras automatiskt när ett resultat/tips skrivs in. */
+function koMatchByNr(nr){ return (config.ko||[]).find(x=>String(x.nr)===String(nr)); }
+function koSide(m, side, ctx, seen){
   const explicit = side==='home' ? m.homeTeam : m.awayTeam;
   if(explicit) return explicit;
   const token = side==='home' ? m.home : m.away;
-  return koLabel(token);
+  if(!token) return koLabel(token);
+  const [kind,refNr] = String(token).split(':');
+  if(kind!=='W' && kind!=='L') return koLabel(token);
+  if(!ctx) return koLabel(token);
+  seen = seen || new Set();
+  if(seen.has(m.nr+':'+side)) return '?';
+  seen.add(m.nr+':'+side);
+  const ref = koMatchByNr(refNr);
+  if(!ref) return koLabel(token);
+  const refHome = koSide(ref,'home',ctx,seen), refAway = koSide(ref,'away',ctx,seen);
+  const r = ctx.ko && ctx.ko[ref.nr];
+  // Oavgjort går inte att avgöra av bara målen (straffar okänt) – räknas som ej klart.
+  if(!r || r.h===''||r.h==null||r.a===''||r.a==null || +r.h===+r.a) return koLabel(token);
+  const h=+r.h, a=+r.a;
+  const winner = h>a ? refHome : refAway, loser = h>a ? refAway : refHome;
+  return kind==='W' ? winner : loser;
 }
 /* Har värden lagt in slutspelet än? */
 function hasKO(){ return !!(config && config.ko && config.ko.length); }
 
-/* Fixtures för ett visst scope: 'group' | 'ko' | 'all' */
-function allFixtures(scope){
+/* Fixtures för ett visst scope: 'group' | 'ko' | 'all'.
+   ctx styr hur slutspelslänkar ("vinnare av match X") slås upp:
+   resultat (facit) som standard, eller en spelares egna tips om man
+   vill visa/tippa den personens egen gissade slutspelsväg. */
+function allFixtures(scope, ctx){
   if(!config) return [];
   scope = scope || 'all';
+  ctx = ctx || results;
   const list=[];
   if(scope!=='ko'){
     groupFixtures().forEach(f=>{
@@ -771,7 +798,7 @@ function allFixtures(scope){
   if(scope!=='group'){
     (config.ko||[]).forEach(m=>{
       list.push({id:'ko:'+m.nr, bucket:'ko', koNr:m.nr,
-                 home:koSide(m,'home'), away:koSide(m,'away'),
+                 home:koSide(m,'home',ctx), away:koSide(m,'away',ctx),
                  label:m.round, time:timeOf('ko:'+m.nr)});
     });
   }
@@ -779,8 +806,8 @@ function allFixtures(scope){
 }
 /* Sort by time when times exist; matches without a time sink to the bottom
    in their natural (group) order. Returns a NEW array. */
-function sortedFixtures(scope){
-  const list=allFixtures(scope);
+function sortedFixtures(scope, ctx){
+  const list=allFixtures(scope, ctx);
   return list.map((f,i)=>({f,i})).sort((x,y)=>{
     const tx=x.f.time, ty=y.f.time;
     if(tx&&ty) return tx<ty?-1:(tx>ty?1:x.i-y.i);
@@ -982,7 +1009,10 @@ function fixtureEditor(container, store, editable, scope){
     container.innerHTML='<div class="empty"><b>Slutspelet är inte klart än</b>Värden lägger in slutspelsmatcherna när gruppspelet är avgjort. Kom tillbaka då!</div>';
     return;
   }
-  const fixtures=sortedFixtures(scope);
+  // I slutspelet slås "vinnare av match X" upp mot store: alltså facit
+  // för värdens Resultat-flik, eller spelarens egna tips för Tippa/Slutspel.
+  const fixtures=sortedFixtures(scope, scope==='ko'?store:undefined);
+  const rebuild=()=>fixtureEditor(container, store, editable, scope);
   const anyTime=fixtures.some(f=>f.time);
   let curDay=null, wrap=null;
   fixtures.forEach(f=>{
@@ -996,7 +1026,7 @@ function fixtureEditor(container, store, editable, scope){
     } else if(!wrap){
       wrap=document.createElement('div');wrap.className='fixtures';container.appendChild(wrap);
     }
-    wrap.appendChild(fxRow(f, store, editable));
+    wrap.appendChild(fxRow(f, store, editable, scope==='ko'?rebuild:null));
   });
   // bonusfrågor hör till gruppspels-/huvudvyn, inte slutspelsfliken
   if(scope!=='ko' && config.bonus && config.bonus.length){
@@ -1015,7 +1045,7 @@ function fixtureEditor(container, store, editable, scope){
     });
   }
 }
-function fxRow(f, store, editable){
+function fxRow(f, store, editable, rebuildKo){
   const bucket=f.bucket, storeKey=(f.koNr!=null?f.koNr:f.id);
   const cell=document.createElement('div');cell.className='fxcell';
   // group accent colour (group stage only)
@@ -1050,6 +1080,9 @@ function fxRow(f, store, editable){
     persist(store);liveScore();
   }
   gi.addEventListener('input',upd);gj.addEventListener('input',upd);
+  // Slutspelslänkar ("vinnare av match X") pekar på lagnamn som kan ändras
+  // när resultatet/tipset för den här matchen sätts – bygg om listan då.
+  if(rebuildKo){ gi.addEventListener('change',rebuildKo); gj.addEventListener('change',rebuildKo); }
   cell._paint=()=>{
     if(store===results){res.textContent='';return;}
     const tip={h:gi.value===''?'':+gi.value,a:gj.value===''?'':+gj.value};
@@ -1299,9 +1332,10 @@ function loadConfigIntoForm(){
 function buildConfigFromForm(){
   const groups=(renderGroupsEditor._draft||[]).filter(g=>g.name&&g.teams.length).map(g=>({name:g.name.trim(),teams:g.teams}));
   const ko=(renderKoEditor._draft||[])
-    .filter(m=>m.homeTeam && m.awayTeam)
+    .filter(m=>(m.homeTeam||m.home) && (m.awayTeam||m.away))
     .map((m,i)=>({nr:String(m.nr||(i+1)), round:(m.round||'Slutspel').trim(),
-                  homeTeam:m.homeTeam, awayTeam:m.awayTeam}));
+                  homeTeam:m.homeTeam||'', home:m.home||'',
+                  awayTeam:m.awayTeam||'', away:m.away||''}));
   const bonus=[];
   $('#cfgBonus').value.split('\n').map(l=>l.trim()).filter(Boolean).forEach(l=>{
     const p=l.split(';').map(x=>x.trim());
@@ -1334,17 +1368,42 @@ function renderKoEditor(){
     if(!m.round) m.round=KO_ROUNDS[0];
     rd.onchange=()=>{ m.round=rd.value; };
 
-    const mkSel=(cur,onPick)=>{
+    // Ett lag kan antingen väljas direkt (t.ex. sextondelsfinal, där laget
+    // är känt från gruppspelet) eller länkas till vinnaren/förloraren av en
+    // tidigare inlagd match – då uppdateras det automatiskt när matchens
+    // resultat/tips fylls i.
+    const earlier = draft.filter((_,idx)=>idx<i);
+    const mkSel=(curLiteral,curToken,onPick)=>{
       const s=document.createElement('select');
-      const blank=document.createElement('option');blank.value='';blank.textContent='– välj lag –';s.appendChild(blank);
-      teams.forEach(t=>{ const o=document.createElement('option');o.value=t;o.textContent=t;
-        if(cur===t) o.selected=true; s.appendChild(o); });
+      const blank=document.createElement('option');blank.value='';blank.textContent='– välj lag –';
+      if(!curLiteral && !curToken) blank.selected=true;
+      s.appendChild(blank);
+      const teamGroup=document.createElement('optgroup');teamGroup.label='Lag (gruppspelet)';
+      teams.forEach(t=>{ const o=document.createElement('option');o.value='team:'+t;o.textContent=t;
+        if(curLiteral===t) o.selected=true; teamGroup.appendChild(o); });
+      s.appendChild(teamGroup);
+      if(earlier.length){
+        const winGroup=document.createElement('optgroup');winGroup.label='Vinnare av tidigare match';
+        earlier.forEach(em=>{ const o=document.createElement('option');o.value='W:'+em.nr;
+          o.textContent=`Vinnare M${em.nr} (${em.round||''})`;
+          if(curToken==='W:'+em.nr) o.selected=true; winGroup.appendChild(o); });
+        s.appendChild(winGroup);
+        const loseGroup=document.createElement('optgroup');loseGroup.label='Förlorare av tidigare match';
+        earlier.forEach(em=>{ const o=document.createElement('option');o.value='L:'+em.nr;
+          o.textContent=`Förlorare M${em.nr} (${em.round||''})`;
+          if(curToken==='L:'+em.nr) o.selected=true; loseGroup.appendChild(o); });
+        s.appendChild(loseGroup);
+      }
       s.onchange=()=>onPick(s.value);
       return s;
     };
-    const hs=mkSel(m.homeTeam,v=>{m.homeTeam=v;});
+    const pick=(v,setLiteral,setToken)=>{
+      if(v.startsWith('team:')){ setLiteral(v.slice(5)); setToken(''); }
+      else { setLiteral(''); setToken(v); }
+    };
+    const hs=mkSel(m.homeTeam,m.home,v=>pick(v,t=>m.homeTeam=t,t=>m.home=t));
     const vs=document.createElement('span');vs.className='kovs';vs.textContent='–';
-    const as=mkSel(m.awayTeam,v=>{m.awayTeam=v;});
+    const as=mkSel(m.awayTeam,m.away,v=>pick(v,t=>m.awayTeam=t,t=>m.away=t));
 
     const del=document.createElement('button');del.className='btn ghost sm';del.textContent='×';
     del.title='Ta bort match';
@@ -1358,7 +1417,7 @@ $('#addKo').onclick=()=>{
   if(!allTeams().length){ toast('Lägg till lag först'); return; }
   const d = renderKoEditor._draft || (renderKoEditor._draft=[]);
   const last = d[d.length-1];
-  d.push({nr:String(d.length+1), round:last?last.round:KO_ROUNDS[0], homeTeam:'', awayTeam:''});
+  d.push({nr:String(d.length+1), round:last?last.round:KO_ROUNDS[0], homeTeam:'', home:'', awayTeam:'', away:''});
   renderKoEditor();
 };
 $('#clearKo').onclick=()=>{
