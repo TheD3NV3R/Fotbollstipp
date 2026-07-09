@@ -317,9 +317,17 @@
   .grpblock .top input{width:auto;flex:1}
 
   /* --- knockout builder --- */
+  .korow-wrap{
+    display:grid;grid-template-columns:42px 1fr;gap:11px;align-items:center;
+    border-bottom:1px solid var(--line);padding:9px 2px;
+  }
+  .komnr{
+    font-family:var(--mono);font-weight:700;font-size:13px;color:var(--flood);
+    background:rgba(216,255,79,.12);border:1px solid var(--line);border-radius:6px;
+    padding:6px 0;text-align:center;
+  }
   .korow{
     display:grid;grid-template-columns:auto 1fr auto 1fr auto;gap:9px;align-items:center;
-    border-bottom:1px solid var(--line);padding:9px 2px;
   }
   .korow select{width:100%;font-size:14px;padding:8px 9px}
   .korow select.koround{
@@ -327,6 +335,8 @@
   }
   .kovs{color:var(--chalk-dim);font-weight:700;text-align:center}
   @media(max-width:640px){
+    .korow-wrap{grid-template-columns:1fr;gap:7px}
+    .komnr{justify-self:start;padding:3px 12px}
     .korow{grid-template-columns:1fr auto 1fr;grid-template-areas:'r r r' 'h v a' 'd d d';gap:8px}
     .korow select.koround{grid-area:r;width:100%;min-width:0}
     .kovs{grid-area:v}
@@ -1578,14 +1588,23 @@ function renderKoEditor(){
     del.onclick=()=>{ draft.splice(i,1); renderKoEditor(); };
 
     row.append(rd,hs,vs,as,del);
-    box.appendChild(row);
+
+    // Matchnummer-bricka så man ser vilken match "Vinnare M1" osv. syftar på.
+    const wrap=document.createElement('div');wrap.className='korow-wrap';
+    const nr=document.createElement('span');nr.className='komnr';nr.textContent='M'+m.nr;
+    nr.title='Den här matchen kan väljas som "Vinnare M'+m.nr+'" i senare matcher';
+    wrap.append(nr,row);
+    box.appendChild(wrap);
   });
 }
 $('#addKo').onclick=()=>{
   if(!allTeams().length){ toast('Lägg till lag först'); return; }
   const d = renderKoEditor._draft || (renderKoEditor._draft=[]);
   const last = d[d.length-1];
-  d.push({nr:String(d.length+1), round:last?last.round:KO_ROUNDS[0], homeTeam:'', home:'', awayTeam:'', away:''});
+  // Nästa lediga nummer = högsta befintliga + 1, så nr aldrig krockar även
+  // efter att en match tagits bort (annars kunde två matcher få samma M#).
+  const maxNr = d.reduce((mx,m)=>Math.max(mx, +m.nr||0), 0);
+  d.push({nr:String(maxNr+1), round:last?last.round:KO_ROUNDS[0], homeTeam:'', home:'', awayTeam:'', away:''});
   renderKoEditor();
 };
 $('#clearKo').onclick=()=>{
