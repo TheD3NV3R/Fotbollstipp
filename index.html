@@ -288,6 +288,13 @@
 
   /* --- Standings: league table --- */
   .standings-count{font-size:11px;text-transform:uppercase;letter-spacing:.14em;color:var(--chalk-dim);font-weight:700;margin:0 0 10px}
+  table.tbl td.rmcell{width:34px;text-align:center;padding:4px}
+  .rmbtn{
+    width:26px;height:26px;line-height:1;border-radius:6px;cursor:pointer;
+    background:transparent;color:var(--miss);border:1px solid var(--line);
+    font-size:16px;font-weight:700;transition:all .15s;
+  }
+  .rmbtn:hover{color:var(--red);border-color:var(--red);background:rgba(224,52,43,.12)}
   table.tbl{width:100%;border-collapse:collapse;font-size:14px}
   table.tbl th{
     font-size:10.5px;text-transform:uppercase;letter-spacing:.16em;color:var(--chalk-dim);font-weight:700;
@@ -1295,32 +1302,56 @@ function renderResult(){ fixtureEditor($('#resultBody'), results, !!cloud.isHost
 /* Alla spelare med tips: jag själv + molnet + importerade. En källa. */
 function allPlayers(){
   const rows=[]; const seen=new Set();
-  const add=(name,tips,me)=>{
+  const add=(name,tips,me,src,pid)=>{
     const key=(name||'').trim().toLowerCase();
     if(!key || seen.has(key)) return;
-    seen.add(key); rows.push({name:name.trim(), tips:normalize(tips), me:!!me});
+    seen.add(key); rows.push({name:name.trim(), tips:normalize(tips), me:!!me, src, pid});
   };
-  if(myName) add(myName, myTips, true);
-  if(ONLINE && cloud.ready) Object.values(cloud.players).forEach(p=>add(p.name,p.tips,false));
-  imported.forEach(p=>add(p.name,p.tips,false));
+  if(myName) add(myName, myTips, true, 'me');
+  // pid för molnspelare = deras uid (dokument-id) så värden kan ta bort rätt post.
+  // Egen post (id===uid) flaggas som "jag" oavsett namn.
+  if(ONLINE && cloud.ready) Object.entries(cloud.players).forEach(([id,p])=>add(p.name,p.tips,id===uid,'cloud',id));
+  imported.forEach((p,i)=>add(p.name,p.tips,false,'imported',i));
   return rows;
+}
+/* Värden kan ta bort en molnspelares post (t.ex. en dubblett). */
+async function removeCloudPlayer(pid, name){
+  if(!fb || !cloud.isHost){ toast('Endast värden kan ta bort spelare'); return; }
+  if(!confirm('Ta bort '+name+' från poolen? Deras tips raderas permanent.')) return;
+  try{
+    await fb.deleteDoc(tipsRef(pid));
+    delete cloud.players[pid];            // omedelbar återkoppling; snapshot bekräftar
+    renderStandings(); renderMatcherIfVisible();
+    toast(name+' borttagen');
+  }catch(e){
+    console.error(e);
+    toast('Kunde inte ta bort – Firestore-reglerna tillåter det inte');
+  }
 }
 
 function renderStandings(){
   const box=$('#standings');
   if(!config){box.innerHTML='<div class="empty"><b>Ingen turnering än</b>Bygg din pool under Inställningar.</div>';return;}
-  const rows=allPlayers().map(p=>({name:p.name,pts:totalFor(p.tips),me:p.me}));
+  const rows=allPlayers().map(p=>({name:p.name,pts:totalFor(p.tips),me:p.me,src:p.src,pid:p.pid}));
   if(!rows.length){box.innerHTML='<div class="empty"><b>Inga tips ännu</b>Sätt ditt namn och tippa, eller importera spelare under Dela.</div>';return;}
   rows.sort((a,b)=>b.pts-a.pts);
   const n=rows.length;
+  // Värden kan ta bort andras molnposter (t.ex. dubbletter) – aldrig sin egen
+  // (matchas på uid, inte namn, så den egna posten aldrig går att radera).
+  const canRemove = r => cloud.isHost && r.src==='cloud' && r.pid!==uid;
+  const showRemove = rows.some(canRemove);
   let html=`<p class="standings-count">${n} spelare med</p>`;
-  html+='<table class="tbl"><thead><tr><th class="num">#</th><th>Spelare</th><th class="num">Poäng</th></tr></thead><tbody>';
+  html+='<table class="tbl"><thead><tr><th class="num">#</th><th>Spelare</th><th class="num">Poäng</th>'+(showRemove?'<th></th>':'')+'</tr></thead><tbody>';
   rows.forEach((r,i)=>{
     const pill=i<3?`<span class="rankpill p${i+1}">${i+1}</span>`:`<span style="padding-left:6px">${i+1}</span>`;
-    html+=`<tr class="${r.me?'me':''}"><td class="num">${pill}</td><td>${escapeHtml(r.name)}${r.me?' <span class="badge">du</span>':''}</td><td class="num">${r.pts}</td></tr>`;
+    const rm = showRemove
+      ? `<td class="rmcell">${canRemove(r)?`<button class="rmbtn" data-pid="${escapeHtml(String(r.pid))}" data-name="${escapeHtml(r.name)}" title="Ta bort spelare">×</button>`:''}</td>`
+      : '';
+    html+=`<tr class="${r.me?'me':''}"><td class="num">${pill}</td><td>${escapeHtml(r.name)}${r.me?' <span class="badge">du</span>':''}</td><td class="num">${r.pts}</td>${rm}</tr>`;
   });
   html+='</tbody></table>';
   box.innerHTML=html;
+  box.querySelectorAll('.rmbtn').forEach(b=>{ b.onclick=()=>removeCloudPlayer(b.dataset.pid, b.dataset.name); });
 }
 function escapeHtml(s){return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 
