@@ -516,7 +516,7 @@
   <section class="tab" id="tab-stallning">
     <div class="card">
       <h2>Ställning</h2>
-      <p class="hint">Poängen räknas ut mot facit i fliken Resultat. Importera fler spelares tips under Dela.</p>
+      <p class="hint" id="standingsHint">Poängen räknas ut mot facit i fliken Resultat. Importera fler spelares tips under Dela.</p>
       <div id="standings"></div>
     </div>
   </section>
@@ -1808,6 +1808,19 @@ function applyHostVisibility(){
     const active = $('#tabs button.on');
     if(active && active.dataset.host){ $$('#tabs button')[0].click(); }
   }
+  // Dela-fliken är bara en offline-reserv (dela tips/facit via inklistrade
+  // koder). När poolen är ansluten till molnet sker allt automatiskt, så
+  // då göms den. I offline-läge visas den som reserv.
+  const cloudActive = ONLINE && cloud.ready && !!cloud.code;
+  const dela=$('#tabs button[data-tab=dela]');
+  if(dela){
+    dela.style.display = cloudActive ? 'none' : '';
+    if(cloudActive && dela.classList.contains('on')) $$('#tabs button')[0].click();
+  }
+  const sh=$('#standingsHint');
+  if(sh) sh.textContent = cloudActive
+    ? 'Poängen räknas ut mot facit i fliken Resultat. Alla deltagares tips syns automatiskt via molnet.'
+    : 'Poängen räknas ut mot facit i fliken Resultat. Importera fler spelares tips under Dela.';
   const li=$('#hostLoginCard'), inf=$('#hostInfoCard');
   if(li) li.style.display = cloud.isHost ? 'none' : '';
   if(inf) inf.style.display = cloud.isHost ? '' : 'none';
