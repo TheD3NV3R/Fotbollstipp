@@ -1,79 +1,102 @@
-// =============================================================================
-// Firestore-säkerhetsregler för Fotbollstipp
-// -----------------------------------------------------------------------------
-// Så här använder du filen:
-//   1. Öppna Firebase Console -> Firestore Database -> fliken "Regler".
-//   2. Klistra in innehållet nedan (ersätt det som står där).
-//   3. Klicka "Publicera".
-//
-// Reglerna matchar exakt vad appen gör:
-//   pools/{poolId}                -> { config, results, joinCode, ownerUid }
-//   pools/{poolId}/tips/{uid}     -> { name, tips, joinCode, updated }   (ett per spelare)
-//   pools/{poolId}/secret/host    -> { hostCode }   (kan aldrig läsas av klienten)
-//   pools/{poolId}/claims/{uid}   -> { hostCode }   (anspråk vid värd-övertagande)
-//
-// Det viktiga för "ta bort spelare": ägaren (ownerUid) får radera vilket
-// tips-dokument som helst – därför fungerar värdens ×-knapp i Ställning.
-// =============================================================================
 rules_version = '2';
+
+// =====================================================================
+//  Firestore-regler för tippningspoolen
+//  Firebase Console -> Firestore Database -> Regler -> klistra in -> Publicera
+//
+//  KRÄVER: Authentication -> Sign-in method -> Anonymous = Enabled
+// =====================================================================
+//
+//  Modell:
+//    pools/{poolId}                -> { config, results, joinCode, ownerUid }  (läsbar)
+//    pools/{poolId}/secret/host    -> { hostCode }                             (EJ läsbar)
+//    pools/{poolId}/claims/{uid}   -> { hostCode }                             (EJ läsbar)
+//    pools/{poolId}/tips/{uid}     -> { name, tips, joinCode, updated }
+//
+//  VÄRDLÅSET
+//  Alla loggas in anonymt (osynligt) och får ett uid.
+//  Poolens `ownerUid` avgör vem som får ändra turnering och facit.
+//
+//  Ta över värdskapet (t.ex. ny dator):
+//    1. Klienten skriver sin värdkod till claims/{sitt uid}.
+//       Ingen kan läsa claims, och man kan bara skriva sin egen.
+//    2. Sedan uppdaterar klienten poolen och sätter ownerUid = sitt uid.
+//       Regeln godkänner det ENDAST om claims/{uid}.hostCode matchar
+//       hemligheten i secret/host.
+//  Värdkoden lämnar alltså aldrig databasen och hamnar aldrig i det
+//  läsbara pool-dokumentet.
+//
+//  BORTTAGNING AV SPELARE
+//  Ett tips-dokument får raderas av spelaren själv ELLER av poolens ägare
+//  (ownerUid) – det senare är vad värdens ×-knapp i Ställning använder för
+//  att t.ex. ta bort en dubblettpost.
+
 service cloud.firestore {
   match /databases/{database}/documents {
 
     match /pools/{poolId} {
-      function isSignedIn() { return request.auth != null; }
-      function poolData()   { return get(/databases/$(database)/documents/pools/$(poolId)).data; }
-      function isOwner()    { return isSignedIn() && resource.data.ownerUid == request.auth.uid; }
 
-      // Alla inloggade får läsa poolen (jämföra poolkod, hämta turnering/facit).
-      allow read: if isSignedIn();
+      function existing()  { return resource.data; }
+      function incoming()  { return request.resource.data; }
+      function signedIn()  { return request.auth != null; }
+      function isOwner()   { return signedIn() && existing().ownerUid == request.auth.uid; }
 
-      // Skapa poolen: man sätter sig själv som ägare.
-      allow create: if isSignedIn()
-                    && request.resource.data.ownerUid == request.auth.uid;
+      function hostSecret(){ return get(/databases/$(database)/documents/pools/$(poolId)/secret/host).data.hostCode; }
+      function hasSecret() { return exists(/databases/$(database)/documents/pools/$(poolId)/secret/host); }
+      function myClaim()   { return get(/databases/$(database)/documents/pools/$(poolId)/claims/$(request.auth.uid)).data.hostCode; }
+      function hasClaim()  { return exists(/databases/$(database)/documents/pools/$(poolId)/claims/$(request.auth.uid)); }
+      function provedHost(){ return signedIn() && hasSecret() && hasClaim() && myClaim() == hostSecret(); }
 
-      // Uppdatera poolen:
-      //   - nuvarande ägare får ändra fritt (turnering, facit, poolkod), ELLER
-      //   - en ägarlös pool får tas över, ELLER
-      //   - man tar över värdskapet genom att bevisa att man kan värdkoden
-      //     (anspråket i claims/{uid} matchar hemligheten i secret/host).
-      allow update: if isOwner()
-        || ( isSignedIn()
-             && !("ownerUid" in resource.data)
-             && request.resource.data.ownerUid == request.auth.uid )
-        || ( isSignedIn()
-             && request.resource.data.ownerUid == request.auth.uid
-             && get(/databases/$(database)/documents/pools/$(poolId)/secret/host).data.hostCode
-                == get(/databases/$(database)/documents/pools/$(poolId)/claims/$(request.auth.uid)).data.hostCode );
+      allow read: if true;
 
-      allow delete: if isOwner();
+      allow create: if signedIn()
+                    && incoming().ownerUid == request.auth.uid
+                    && incoming().joinCode is string
+                    && incoming().joinCode.size() >= 4;
 
-      // --- Deltagarnas tips (ett dokument per spelare, id = spelarens uid) ---
-      match /tips/{playerId} {
-        allow read: if isSignedIn();
+      // (1) Ägaren ändrar turnering/facit.  (2) Bevisad värd tar över ownerUid.
+      allow update: if
+        ( isOwner()
+          && incoming().ownerUid == existing().ownerUid
+          && incoming().joinCode == existing().joinCode )
+        ||
+        ( provedHost()
+          && incoming().ownerUid == request.auth.uid
+          && incoming().joinCode == existing().joinCode );
 
-        // Man får bara skriva SITT EGET tips, och måste ange rätt poolkod.
-        allow create, update: if isSignedIn()
-          && request.auth.uid == playerId
-          && request.resource.data.joinCode == poolData().joinCode;
+      allow delete: if false;
 
-        // Radera: spelaren själv ELLER poolens ägare (t.ex. för att ta bort en dubblett).
-        allow delete: if isSignedIn()
-          && ( request.auth.uid == playerId
-               || poolData().ownerUid == request.auth.uid );
-      }
-
-      // --- Hemlig värdkod: skapas en gång, kan aldrig läsas av klienten ---
-      match /secret/{docId} {
-        allow read: if false;               // bara reglerna får läsa (via get())
-        allow create: if isSignedIn();
+      // Hemligheten: skrivs en gång vid skapandet, kan aldrig läsas.
+      match /secret/host {
+        allow read: if false;
+        allow create: if signedIn()
+                      && request.resource.data.hostCode is string
+                      && request.resource.data.hostCode.size() >= 6;
         allow update, delete: if false;
       }
 
-      // --- Anspråk vid värd-övertagande: skrivs av den som försöker, läses bara av reglerna ---
-      match /claims/{claimId} {
+      // Ditt anspråk på värdskap. Bara du kan skriva ditt, ingen kan läsa.
+      match /claims/{uid} {
         allow read: if false;
-        allow create, update: if isSignedIn() && request.auth.uid == claimId;
-        allow delete: if false;
+        allow create, update: if signedIn() && request.auth.uid == uid
+                              && request.resource.data.hostCode is string;
+        allow delete: if signedIn() && request.auth.uid == uid;
+      }
+
+      // Spelarnas tips: ett dokument per uid.
+      match /tips/{uid} {
+        allow read: if true;
+        allow create, update: if signedIn()
+                              && request.auth.uid == uid
+                              && request.resource.data.joinCode ==
+                                 get(/databases/$(database)/documents/pools/$(poolId)).data.joinCode
+                              && request.resource.data.name is string
+                              && request.resource.data.name.size() > 0
+                              && request.resource.data.name.size() <= 40;
+        // Spelaren själv ELLER poolens ägare (för att ta bort t.ex. en dubblett).
+        allow delete: if signedIn()
+                      && ( request.auth.uid == uid
+                           || get(/databases/$(database)/documents/pools/$(poolId)).data.ownerUid == request.auth.uid );
       }
     }
   }
