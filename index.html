@@ -235,6 +235,19 @@
   }
   .fx .res.zero{color:var(--miss);background:rgba(0,0,0,.28)}
 
+  /* --- Skicka in / lås tips --- */
+  .submitbar{
+    margin-top:16px;padding:16px;border-radius:12px;border:1px solid var(--line);
+    background:var(--pitch-2);box-shadow:var(--shadow);
+    display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;
+  }
+  .submitbar .sb-info{font-size:13px;color:var(--chalk-dim);flex:1;min-width:160px}
+  .submitbar.locked{border-color:rgba(94,224,138,.45);background:linear-gradient(180deg,rgba(94,224,138,.10),transparent 60%),var(--pitch-2)}
+  .submitbar .sb-lock{display:flex;align-items:center;gap:9px;font-weight:700;color:var(--win);font-size:15px}
+  .submitbar .sb-lock .lk{font-size:18px}
+  .btn.big{padding:13px 22px;font-size:15px}
+  .btn.big:disabled{opacity:.5;cursor:not-allowed}
+
   /* --- Slutspelsträd (playoff bracket) --- */
   .bracket{
     position:relative;display:flex;gap:38px;align-items:stretch;
@@ -519,6 +532,7 @@
       <p class="hint" id="joinHint" style="margin:10px 0 0"></p>
     </div>
     <div id="tippaBody"></div>
+    <div id="tippaSubmit"></div>
   </section>
 
   <!-- ============ SLUTSPEL (tippning) ============ -->
@@ -528,6 +542,7 @@
       <p class="hint">Här tippar du slutspelsmatcherna. De läggs in av värden när gruppspelet är avgjort.</p>
     </div>
     <div id="slutspelBody"></div>
+    <div id="slutspelSubmit"></div>
   </section>
 
   <!-- ============ STÄLLNING ============ -->
@@ -1178,12 +1193,78 @@ function queueSync(what){
   clearTimeout(_syncT);
   _syncT=setTimeout(()=>{ if(what==='tips') cloudSaveTips(); else cloudSavePool(); }, 700);
 }
-function liveScore(){ $$('.fxcell').forEach(r=>r._paint&&r._paint()); renderStandings(); renderMatcherIfVisible(); renderExport(); }
+function liveScore(){ $$('.fxcell').forEach(r=>r._paint&&r._paint()); renderStandings(); renderMatcherIfVisible(); renderExport(); refreshSubmitBars(); }
+/* Uppdatera skicka-in-knapparnas läge löpande när tips fylls i. */
+function refreshSubmitBars(){
+  renderSubmitBar($('#tippaSubmit'), 'group', groupComplete(), groupLocked());
+  renderSubmitBar($('#slutspelSubmit'), 'ko', koComplete(), koLocked());
+}
 /* Rita bara om Matcher-fliken syns – annars stjäl select-elementet fokus. */
 function renderMatcherIfVisible(){ const t=$('#tab-matcher'); if(t && t.classList.contains('on')) renderMatcher(); }
 
-function renderTippa(){ $('#whoLabel').textContent = myName||'– sätt ditt namn –'; $('#playerName').value=myName; fixtureEditor($('#tippaBody'), myTips, true, 'group'); }
-function renderSlutspel(){ renderBracket($('#slutspelBody'), myTips, true); }
+/* ---- Skicka in / lås tips (gruppspel och slutspel var för sig) ---- */
+function groupLocked(){ return !!(myTips.locked && myTips.locked.group); }
+function koLocked(){ return !!(myTips.locked && myTips.locked.ko); }
+function filled(t){ return t && t.h!=='' && t.h!=null && t.a!=='' && t.a!=null; }
+function groupComplete(){
+  if(!config) return false;
+  const gm=groupFixtures();
+  if(!gm.length) return false;
+  if(!gm.every(f=>filled(myTips.matches[f.key]))) return false;
+  return (config.bonus||[]).every((b,i)=>myTips.bonus && String(myTips.bonus[i]||'').trim()!=='');
+}
+function koComplete(){
+  if(!config || !hasKO()) return false;
+  return config.ko.every(m=>filled(myTips.ko[m.nr]));
+}
+function submitScope(scope){
+  const isGroup = scope==='group';
+  if(!myName){ toast('Sätt ditt namn först'); return; }
+  if(isGroup ? !groupComplete() : !koComplete()){
+    toast(isGroup ? 'Tippa alla gruppmatcher (och bonusfrågor) först' : 'Tippa alla slutspelsmatcher först');
+    return;
+  }
+  const label = isGroup ? 'gruppspelstipsen' : 'slutspelstipsen';
+  if(!confirm('När du skickat in kan '+label+' inte ändras. Skicka in?')) return;
+  myTips.locked = myTips.locked || {};
+  myTips.locked[scope] = true;
+  persist(myTips);
+  renderAll();
+  toast(isGroup ? 'Gruppspelstips inskickat 🔒' : 'Slutspelstips inskickat 🔒');
+}
+function renderSubmitBar(box, scope, complete, locked){
+  if(!box) return;
+  box.innerHTML='';
+  if(!config || !myName) return;                      // inget att skicka förrän man är med
+  if(scope==='ko' && !hasKO()) return;                // inget slutspel att skicka än
+  const bar=document.createElement('div');bar.className='submitbar'+(locked?' locked':'');
+  if(locked){
+    bar.innerHTML='<div class="sb-lock"><span class="lk">🔒</span> Inskickat – kan inte ändras</div>'+
+                  '<div class="sb-info">Hör av dig till värden om något blev fel.</div>';
+  }else{
+    const info=document.createElement('div');info.className='sb-info';
+    info.textContent = complete
+      ? 'Allt ifyllt. När du skickat in låses tipset och kan inte ändras.'
+      : (scope==='group' ? 'Fyll i alla matcher och bonusfrågor för att kunna skicka in.'
+                         : 'Fyll i alla slutspelsmatcher för att kunna skicka in.');
+    const btn=document.createElement('button');btn.className='btn sig big';
+    btn.textContent = scope==='group' ? 'Skicka in gruppspelstips' : 'Skicka in slutspelstips';
+    btn.disabled = !complete;
+    btn.onclick=()=>submitScope(scope);
+    bar.append(info,btn);
+  }
+  box.appendChild(bar);
+}
+
+function renderTippa(){
+  $('#whoLabel').textContent = myName||'– sätt ditt namn –'; $('#playerName').value=myName;
+  fixtureEditor($('#tippaBody'), myTips, !groupLocked(), 'group');
+  renderSubmitBar($('#tippaSubmit'), 'group', groupComplete(), groupLocked());
+}
+function renderSlutspel(){
+  renderBracket($('#slutspelBody'), myTips, !koLocked());
+  renderSubmitBar($('#slutspelSubmit'), 'ko', koComplete(), koLocked());
+}
 
 /* ---- Slutspelsträd: rundor som kolumner, elbow-linjer mellan matcher ---- */
 function koRoundIndex(round){ const i=KO_ROUNDS.indexOf(round); return i<0?KO_ROUNDS.length:i; }
