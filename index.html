@@ -287,6 +287,7 @@
   }
 
   /* --- Standings: league table --- */
+  .standings-count{font-size:11px;text-transform:uppercase;letter-spacing:.14em;color:var(--chalk-dim);font-weight:700;margin:0 0 10px}
   table.tbl{width:100%;border-collapse:collapse;font-size:14px}
   table.tbl th{
     font-size:10.5px;text-transform:uppercase;letter-spacing:.16em;color:var(--chalk-dim);font-weight:700;
@@ -1311,7 +1312,9 @@ function renderStandings(){
   const rows=allPlayers().map(p=>({name:p.name,pts:totalFor(p.tips),me:p.me}));
   if(!rows.length){box.innerHTML='<div class="empty"><b>Inga tips ännu</b>Sätt ditt namn och tippa, eller importera spelare under Dela.</div>';return;}
   rows.sort((a,b)=>b.pts-a.pts);
-  let html='<table class="tbl"><thead><tr><th class="num">#</th><th>Spelare</th><th class="num">Poäng</th></tr></thead><tbody>';
+  const n=rows.length;
+  let html=`<p class="standings-count">${n} spelare med</p>`;
+  html+='<table class="tbl"><thead><tr><th class="num">#</th><th>Spelare</th><th class="num">Poäng</th></tr></thead><tbody>';
   rows.forEach((r,i)=>{
     const pill=i<3?`<span class="rankpill p${i+1}">${i+1}</span>`:`<span style="padding-left:6px">${i+1}</span>`;
     html+=`<tr class="${r.me?'me':''}"><td class="num">${pill}</td><td>${escapeHtml(r.name)}${r.me?' <span class="badge">du</span>':''}</td><td class="num">${r.pts}</td></tr>`;
@@ -1712,12 +1715,22 @@ window.addEventListener('resize',()=>{
   _brT=setTimeout(()=>{ if($('#tab-slutspel').classList.contains('on')) renderSlutspel(); }, 150);
 });
 
+/* Är namnet redan upptaget av EN ANNAN deltagare i molnpoolen? (Egen post,
+   dvs samma uid, räknas inte – man får behålla sitt eget namn.) */
+function nameTakenByOther(name){
+  const key=(name||'').trim().toLowerCase();
+  if(!key) return false;
+  return Object.entries(cloud.players).some(([id,p])=>
+    id!==uid && (p.name||'').trim().toLowerCase()===key);
+}
 $('#setName').onclick=async()=>{
   const v=$('#playerName').value.trim();
   if(!v){toast('Skriv ditt namn');return;}
   if(ONLINE){
     const code=$('#joinCode').value.trim();
     if(!code){toast('Skriv poolkoden');return;}
+    // Blockera dubbletter så två personer inte krockar i ställningen.
+    if(cloud.ready && nameTakenByOther(v)){ toast('Namnet "'+v+'" är upptaget – välj ett annat'); return; }
     const ok=await cloudJoin(code);
     if(!ok) return;
   }else{ cloud.joined=true; }
