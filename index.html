@@ -641,7 +641,7 @@
 
     <div class="card">
       <h2><span class="n">5</span> Speltider <span class="badge">valfritt</span></h2>
-      <p class="hint">Sätt datum och tid för matcherna så sorteras Tippa- och Resultat-listorna kronologiskt, med dagsrubriker. Matcher utan tid hamnar sist. Bygg poolen först (spara), fyll sedan i tider här.</p>
+      <p class="hint">Sätt datum och tid för matcherna så sorteras Tippa- och Resultat-listorna kronologiskt, med dagsrubriker. Året är låst till innevarande år och tiden går i 15-minuterssteg – du väljer bara dag och tid. Matcher utan tid hamnar sist. Bygg poolen först (spara), fyll sedan i tider här.</p>
       <div class="btnbar" style="margin-bottom:6px">
         <button class="btn ghost sm" id="loadTimesEditor">Visa/uppdatera matchlista</button>
         <button class="btn ghost sm" id="clearTimes">Rensa alla tider</button>
@@ -1605,9 +1605,18 @@ function renderTimesEditor(){
     const r=document.createElement('div');r.className='timerow';
     const lab=document.createElement('div');lab.className='timelab';
     lab.innerHTML=`<span class="fxgrp">${f.label}</span><span class="timeteams">${escapeHtml(f.home)} – ${escapeHtml(f.away)}</span>`;
-    const inp=document.createElement('input');inp.type='datetime-local';inp.value=config.times[f.id]||'';
+    const yr=new Date().getFullYear();
+    const inp=document.createElement('input');inp.type='datetime-local';
+    inp.step=900;                                   // 15-min steg, ingen godtycklig minut
+    inp.min=`${yr}-01-01T00:00`;inp.max=`${yr}-12-31T23:45`;   // lås till innevarande år
+    inp.value=config.times[f.id]||'';
     inp.onchange=()=>{
-      if(inp.value) config.times[f.id]=inp.value; else delete config.times[f.id];
+      let v=inp.value;
+      if(v){
+        // Tvinga alltid innevarande år – man ska inte behöva välja år.
+        v=String(yr)+v.slice(4);
+        inp.value=v; config.times[f.id]=v;
+      } else { delete config.times[f.id]; }
       save(LS.cfg,config); renderTippa(); renderSlutspel(); renderResult();
     };
     r.append(lab,inp);box.appendChild(r);
