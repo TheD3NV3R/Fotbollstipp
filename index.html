@@ -852,7 +852,7 @@ function koLabel(token){
      hostCode  -> bara du. Ger rätt att ändra turnering och facit.
    Firestore-reglerna kontrollerar båda på serversidan.
    =================================================================== */
-let cloud = { ready:false, joined:false, isHost:false, code:'', players:{}, ownerUid:'' };
+let cloud = { ready:false, checked:false, joined:false, isHost:false, code:'', players:{}, ownerUid:'' };
 
 function poolRef(){ return fb.doc(fb.db,'pools',POOL_ID); }
 function tipsRef(id){ return fb.doc(fb.db,'pools',POOL_ID,'tips',id); }
@@ -868,6 +868,7 @@ async function cloudBoot(){
 
     fb.onSnapshot(poolRef(), snap=>{
       const d = snap.data();
+      cloud.checked = true;
       if(!d){ setSyncBadge('tom pool'); renderAll(); return; }
       cloud.code     = d.joinCode || '';
       cloud.ownerUid = d.ownerUid || '';
@@ -1552,7 +1553,11 @@ $('#importConfigBtn').onclick=()=>{
 
 /* --- cloud UI helpers --- */
 function applyHostVisibility(){
-  const host = cloud.isHost;
+  // Innan poolen publicerats finns ingen ägare att skydda ännu, så
+  // Inställningar/Resultat måste vara nåbara för att någon ska kunna
+  // publicera den första poolen (annars kommer man aldrig åt "Publicera pool").
+  const setupMode = ONLINE && cloud.ready && cloud.checked && !cloud.code;
+  const host = cloud.isHost || setupMode;
   $$('#tabs button[data-host]').forEach(b=>{ b.style.display = host ? '' : 'none'; });
   // if a hidden tab is currently active, fall back to Tippa
   if(!host){
@@ -1560,8 +1565,8 @@ function applyHostVisibility(){
     if(active && active.dataset.host){ $$('#tabs button')[0].click(); }
   }
   const li=$('#hostLoginCard'), inf=$('#hostInfoCard');
-  if(li) li.style.display = host ? 'none' : '';
-  if(inf) inf.style.display = host ? '' : 'none';
+  if(li) li.style.display = cloud.isHost ? 'none' : '';
+  if(inf) inf.style.display = cloud.isHost ? '' : 'none';
 }
 function renderCloudState(){
   const el=$('#cloudState'); if(!el) return;
