@@ -393,6 +393,16 @@
   th.sortable .arr{margin-left:5px;font-size:10px}
   td.hit{color:var(--flood);font-weight:700}
   td.part{color:var(--amber);font-weight:600}
+  /* Match-detaljvyn: gör spelarnas gissningar tydliga (scoreboard-look). */
+  .tbl td.matchtip{padding-top:7px;padding-bottom:7px}
+  .tbl td.matchtip .tipbox{
+    display:inline-block;min-width:52px;text-align:center;
+    font-family:var(--mono);font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;
+    padding:5px 12px;border-radius:8px;color:var(--chalk);
+    background:rgba(255,255,255,.05);border:1px solid var(--line);
+  }
+  .tbl td.matchtip.hit .tipbox{color:var(--flood);background:rgba(216,255,79,.15);border-color:rgba(216,255,79,.55);text-shadow:0 0 12px rgba(216,255,79,.4)}
+  .tbl td.matchtip.part .tipbox{color:var(--amber);background:rgba(255,179,31,.13);border-color:rgba(255,179,31,.5)}
   .ptschip.part{background:transparent;color:var(--amber);border:1px solid rgba(255,179,31,.5)}
   .ptschip{background:var(--flood);color:var(--pitch);border-radius:999px;padding:2px 9px;font-weight:700;font-size:11.5px}
   .pending{color:var(--miss)}
@@ -1557,7 +1567,7 @@ function renderMatchDetail(){
     const pts = r.pts==null ? '<span class="pending">–</span>' : (r.pts>0?`<span class="ptschip${exact?'':' part'}">+${r.pts}</span>`:'0');
     html+=`<tr class="${r.me?'me':''}">
       <td>${escapeHtml(r.name)}${r.me?' <span class="badge">du</span>':''}</td>
-      <td class="num ${cls}">${fmtTip(r.tip)}</td>
+      <td class="num matchtip ${cls}"><span class="tipbox">${fmtTip(r.tip)}</span></td>
       <td class="num">${pts}</td></tr>`;
   });
   html+='</tbody></table>';
