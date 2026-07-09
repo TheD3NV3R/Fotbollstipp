@@ -301,13 +301,17 @@
 
   /* --- Standings: league table --- */
   .standings-count{font-size:11px;text-transform:uppercase;letter-spacing:.14em;color:var(--chalk-dim);font-weight:700;margin:0 0 10px}
-  table.tbl td.rmcell{width:34px;text-align:center;padding:4px}
-  .rmbtn{
+  table.tbl td.rmcell{width:auto;white-space:nowrap;text-align:right;padding:4px}
+  .rmbtn,.unlockbtn{
     width:26px;height:26px;line-height:1;border-radius:6px;cursor:pointer;
     background:transparent;color:var(--miss);border:1px solid var(--line);
-    font-size:16px;font-weight:700;transition:all .15s;
+    font-size:14px;font-weight:700;transition:all .15s;
   }
+  .unlockbtn{margin-right:6px}
+  .rmbtn{font-size:16px}
   .rmbtn:hover{color:var(--red);border-color:var(--red);background:rgba(224,52,43,.12)}
+  .unlockbtn:hover{border-color:var(--flood);background:rgba(216,255,79,.14)}
+  .lockmark{font-size:11px;opacity:.85}
   table.tbl{width:100%;border-collapse:collapse;font-size:14px}
   table.tbl th{
     font-size:10.5px;text-transform:uppercase;letter-spacing:.16em;color:var(--chalk-dim);font-weight:700;
@@ -996,7 +1000,17 @@ async function cloudBoot(){
 
     fb.onSnapshot(fb.collection(fb.db,'pools',POOL_ID,'tips'), snap=>{
       cloud.players = {};
-      snap.forEach(d=>{ const v=d.data(); if(v&&v.tips) cloud.players[d.id]={name:v.name||d.id,tips:normalize(v.tips)}; });
+      let myLock=null, sawMine=false;
+      snap.forEach(d=>{
+        const v=d.data(); if(v&&v.tips) cloud.players[d.id]={name:v.name||d.id,tips:normalize(v.tips)};
+        if(d.id===uid && v){ sawMine=true; myLock=(v.tips&&v.tips.locked)||{}; }
+      });
+      // Synka mitt EGNA lås-läge från molnet så att värdens upplåsning slår
+      // igenom här (mina tips-värden i övrigt är lokala och rörs inte).
+      if(sawMine && JSON.stringify(myLock)!==JSON.stringify(myTips.locked||{})){
+        myTips.locked = myLock; save(LS.tips,myTips);
+        renderTippa(); renderSlutspel();
+      }
       renderStandings();
     }, err=>console.error(err));
   }catch(e){
@@ -1409,30 +1423,53 @@ async function removeCloudPlayer(pid, name){
     toast('Kunde inte ta bort – Firestore-reglerna tillåter det inte');
   }
 }
+/* Värden låser upp en spelares tips så de kan skicka in igen. Bara lås-flaggan
+   ändras; tipsinnehållet lämnas orört (Firestore-regeln kräver det). */
+async function unlockCloudPlayer(pid, name){
+  if(!fb || !cloud.isHost){ toast('Endast värden kan låsa upp'); return; }
+  const p=cloud.players[pid]; if(!p) return;
+  const newTips=Object.assign({}, p.tips, {locked:{group:false, ko:false}});
+  try{
+    await fb.setDoc(tipsRef(pid), {name:p.name, tips:newTips, joinCode:cloud.code, updated:Date.now()});
+    if(cloud.players[pid]) cloud.players[pid].tips.locked={group:false,ko:false};
+    renderStandings();
+    toast(name+' kan tippa igen');
+  }catch(e){
+    console.error(e);
+    toast('Kunde inte låsa upp – kontrollera Firestore-reglerna');
+  }
+}
+function playerLocked(tips){ return !!(tips && tips.locked && (tips.locked.group || tips.locked.ko)); }
 
 function renderStandings(){
   const box=$('#standings');
   if(!config){box.innerHTML='<div class="empty"><b>Ingen turnering än</b>Bygg din pool under Inställningar.</div>';return;}
-  const rows=allPlayers().map(p=>({name:p.name,pts:totalFor(p.tips),me:p.me,src:p.src,pid:p.pid}));
+  const rows=allPlayers().map(p=>({name:p.name,pts:totalFor(p.tips),me:p.me,src:p.src,pid:p.pid,locked:playerLocked(p.tips)}));
   if(!rows.length){box.innerHTML='<div class="empty"><b>Inga tips ännu</b>Sätt ditt namn och tippa, eller importera spelare under Dela.</div>';return;}
   rows.sort((a,b)=>b.pts-a.pts);
   const n=rows.length;
-  // Värden kan ta bort andras molnposter (t.ex. dubbletter) – aldrig sin egen
-  // (matchas på uid, inte namn, så den egna posten aldrig går att radera).
+  // Värden kan ta bort andras molnposter (aldrig sin egen – matchas på uid),
+  // och låsa upp den som skickat in så de kan tippa igen.
   const canRemove = r => cloud.isHost && r.src==='cloud' && r.pid!==uid;
-  const showRemove = rows.some(canRemove);
+  const canUnlock = r => canRemove(r) && r.locked;
+  const showActions = rows.some(r=>canRemove(r)||canUnlock(r));
   let html=`<p class="standings-count">${n} spelare med</p>`;
-  html+='<table class="tbl"><thead><tr><th class="num">#</th><th>Spelare</th><th class="num">Poäng</th>'+(showRemove?'<th></th>':'')+'</tr></thead><tbody>';
+  html+='<table class="tbl"><thead><tr><th class="num">#</th><th>Spelare</th><th class="num">Poäng</th>'+(showActions?'<th></th>':'')+'</tr></thead><tbody>';
   rows.forEach((r,i)=>{
     const pill=i<3?`<span class="rankpill p${i+1}">${i+1}</span>`:`<span style="padding-left:6px">${i+1}</span>`;
-    const rm = showRemove
-      ? `<td class="rmcell">${canRemove(r)?`<button class="rmbtn" data-pid="${escapeHtml(String(r.pid))}" data-name="${escapeHtml(r.name)}" title="Ta bort spelare">×</button>`:''}</td>`
-      : '';
-    html+=`<tr class="${r.me?'me':''}"><td class="num">${pill}</td><td>${escapeHtml(r.name)}${r.me?' <span class="badge">du</span>':''}</td><td class="num">${r.pts}</td>${rm}</tr>`;
+    const lock = r.locked ? ' <span class="lockmark" title="Har skickat in">🔒</span>' : '';
+    let actions='';
+    if(showActions){
+      const ub = canUnlock(r) ? `<button class="unlockbtn" data-pid="${escapeHtml(String(r.pid))}" data-name="${escapeHtml(r.name)}" title="Lås upp – låt spelaren tippa igen">🔓</button>` : '';
+      const rb = canRemove(r) ? `<button class="rmbtn" data-pid="${escapeHtml(String(r.pid))}" data-name="${escapeHtml(r.name)}" title="Ta bort spelare">×</button>` : '';
+      actions=`<td class="rmcell">${ub}${rb}</td>`;
+    }
+    html+=`<tr class="${r.me?'me':''}"><td class="num">${pill}</td><td>${escapeHtml(r.name)}${r.me?' <span class="badge">du</span>':''}${lock}</td><td class="num">${r.pts}</td>${actions}</tr>`;
   });
   html+='</tbody></table>';
   box.innerHTML=html;
   box.querySelectorAll('.rmbtn').forEach(b=>{ b.onclick=()=>removeCloudPlayer(b.dataset.pid, b.dataset.name); });
+  box.querySelectorAll('.unlockbtn').forEach(b=>{ b.onclick=()=>unlockCloudPlayer(b.dataset.pid, b.dataset.name); });
 }
 function escapeHtml(s){return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 

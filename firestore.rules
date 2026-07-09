@@ -85,18 +85,41 @@ service cloud.firestore {
 
       // Spelarnas tips: ett dokument per uid.
       match /tips/{uid} {
+        function poolOwner(){ return get(/databases/$(database)/documents/pools/$(poolId)).data.ownerUid; }
+        function joinOk(){ return request.resource.data.joinCode ==
+                                  get(/databases/$(database)/documents/pools/$(poolId)).data.joinCode; }
+        function nameOk(){ return request.resource.data.name is string
+                                  && request.resource.data.name.size() > 0
+                                  && request.resource.data.name.size() <= 40; }
+        // Lås-flaggor (saknas => olåst). locked ligger inuti tips-kartan.
+        function lockedGroup(t){ return t.get('locked', {}).get('group', false) == true; }
+        function lockedKo(t){    return t.get('locked', {}).get('ko',    false) == true; }
+        // Är gruppspels- resp. slutspelsdelen oförändrad mellan gammalt och nytt?
+        function groupUnchanged(){ return request.resource.data.tips.get('matches', {}) == resource.data.tips.get('matches', {})
+                                       && request.resource.data.tips.get('bonus',   {}) == resource.data.tips.get('bonus',   {}); }
+        function koUnchanged(){    return request.resource.data.tips.get('ko', {}) == resource.data.tips.get('ko', {}); }
+
         allow read: if true;
-        allow create, update: if signedIn()
-                              && request.auth.uid == uid
-                              && request.resource.data.joinCode ==
-                                 get(/databases/$(database)/documents/pools/$(poolId)).data.joinCode
-                              && request.resource.data.name is string
-                              && request.resource.data.name.size() > 0
-                              && request.resource.data.name.size() <= 40;
+
+        // Skapa sitt eget tips (ingen låsning ännu).
+        allow create: if signedIn() && request.auth.uid == uid && joinOk() && nameOk();
+
+        // Uppdatera:
+        //  (A) Spelaren själv – men en INLÅST del får inte ändras, och man kan
+        //      inte låsa upp sig själv (lås-flaggan måste förbli satt).
+        //  (B) Värden (ägaren) – får ändra lås-flaggorna (t.ex. låsa upp så
+        //      spelaren kan skicka in igen) men INTE själva tipsinnehållet.
+        allow update: if
+          ( signedIn() && request.auth.uid == uid && joinOk() && nameOk()
+            && ( !lockedGroup(resource.data.tips) || (groupUnchanged() && lockedGroup(request.resource.data.tips)) )
+            && ( !lockedKo(resource.data.tips)    || (koUnchanged()    && lockedKo(request.resource.data.tips)) ) )
+          ||
+          ( signedIn() && poolOwner() == request.auth.uid
+            && groupUnchanged() && koUnchanged() );
+
         // Spelaren själv ELLER poolens ägare (för att ta bort t.ex. en dubblett).
         allow delete: if signedIn()
-                      && ( request.auth.uid == uid
-                           || get(/databases/$(database)/documents/pools/$(poolId)).data.ownerUid == request.auth.uid );
+                      && ( request.auth.uid == uid || poolOwner() == request.auth.uid );
       }
     }
   }
