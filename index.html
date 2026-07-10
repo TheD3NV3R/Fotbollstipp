@@ -546,6 +546,7 @@
       </div>
       <p class="hint" id="joinHint" style="margin:10px 0 0"></p>
       <p class="hint" id="resumeShow" style="margin:8px 0 0;display:none"></p>
+      <p class="hint" id="resumeHelp" style="margin:8px 0 0">Välj gärna en <b>återkomstkod</b> när du går med – då kan du fortsätta tippa på en annan enhet genom att ange samma namn och kod. Lämnar du fältet tomt skapas en kod åt dig som visas här.</p>
     </div>
     <div id="tippaBody"></div>
     <div id="tippaSubmit"></div>
@@ -1899,11 +1900,16 @@ async function ensureTipSecret(code){
   catch(e){ /* finns redan – behåll den ursprungliga koden */ }
 }
 function showResumeCode(){
-  const el=$('#resumeShow'); if(!el) return;
-  if(ONLINE && cloud.joined && myRcode){
-    el.style.display='';
-    el.innerHTML='Din återkomstkod: <b>'+escapeHtml(myRcode)+'</b> — spara den så kan du fortsätta tippa på en annan enhet med samma namn.';
-  }else{ el.style.display='none'; }
+  const el=$('#resumeShow'), help=$('#resumeHelp');
+  const joined = ONLINE && cloud.joined && myRcode;
+  if(el){
+    if(joined){
+      el.style.display='';
+      el.innerHTML='Din återkomstkod: <b>'+escapeHtml(myRcode)+'</b> — spara den så kan du fortsätta tippa på en annan enhet med samma namn.';
+    }else{ el.style.display='none'; }
+  }
+  // Den generella hjälptexten behövs bara innan man gått med.
+  if(help) help.style.display = joined ? 'none' : '';
 }
 /* Fortsätt som en befintlig spelare på en ny enhet: bevisa återkomstkoden,
    flytta över posten till den här enheten och behåll tipsen (och ev. lås). */
