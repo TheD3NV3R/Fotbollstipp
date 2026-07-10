@@ -98,6 +98,17 @@ service cloud.firestore {
         function groupUnchanged(){ return request.resource.data.tips.get('matches', {}) == resource.data.tips.get('matches', {})
                                        && request.resource.data.tips.get('bonus',   {}) == resource.data.tips.get('bonus',   {}); }
         function koUnchanged(){    return request.resource.data.tips.get('ko', {}) == resource.data.tips.get('ko', {}); }
+        // Personlig återkomst: den som raderar har skrivit ett anspråk vars kod
+        // matchar den hemliga återkomstkoden för den gamla postens slug.
+        function tipClaim(){ return get(/databases/$(database)/documents/pools/$(poolId)/tipclaims/$(request.auth.uid)).data; }
+        function tipSecret(s){ return get(/databases/$(database)/documents/pools/$(poolId)/tipsecret/$(s)).data; }
+        function resumeProven(){
+          return ('slug' in resource.data)
+            && exists(/databases/$(database)/documents/pools/$(poolId)/tipclaims/$(request.auth.uid))
+            && exists(/databases/$(database)/documents/pools/$(poolId)/tipsecret/$(resource.data.slug))
+            && tipClaim().slug == resource.data.slug
+            && tipClaim().code == tipSecret(resource.data.slug).code;
+        }
 
         allow read: if true;
 
@@ -117,9 +128,27 @@ service cloud.firestore {
           ( signedIn() && poolOwner() == request.auth.uid
             && groupUnchanged() && koUnchanged() );
 
-        // Spelaren själv ELLER poolens ägare (för att ta bort t.ex. en dubblett).
+        // Spelaren själv, poolens ägare (ta bort dubblett), ELLER en spelare som
+        // flyttar sin post till en ny enhet med rätt återkomstkod.
         allow delete: if signedIn()
-                      && ( request.auth.uid == uid || poolOwner() == request.auth.uid );
+                      && ( request.auth.uid == uid || poolOwner() == request.auth.uid || resumeProven() );
+      }
+
+      // Hemlig återkomstkod per spelare (nyckel = slug av namnet). Skrivs en
+      // gång, kan aldrig läsas av klienten (bara av reglerna via get()).
+      match /tipsecret/{slug} {
+        allow read: if false;
+        allow create: if signedIn() && request.resource.data.code is string;
+        allow update, delete: if false;
+      }
+
+      // Anspråk vid enhetsbyte: skrivs av den som försöker återuppta, läses bara
+      // av reglerna. Bara din egen kan skrivas.
+      match /tipclaims/{uid} {
+        allow read: if false;
+        allow create, update: if signedIn() && request.auth.uid == uid
+                              && request.resource.data.code is string;
+        allow delete: if signedIn() && request.auth.uid == uid;
       }
     }
   }

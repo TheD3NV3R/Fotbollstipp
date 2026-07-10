@@ -540,10 +540,12 @@
         <div class="split">
           <input type="text" id="playerName" placeholder="Ditt namn" style="width:160px">
           <input type="password" id="joinCode" placeholder="Poolkod" style="width:130px">
+          <input type="text" id="resumeCode" placeholder="Återkomstkod" style="width:150px" autocomplete="off">
           <button class="btn sm sig" id="setName">Gå med</button>
         </div>
       </div>
       <p class="hint" id="joinHint" style="margin:10px 0 0"></p>
+      <p class="hint" id="resumeShow" style="margin:8px 0 0;display:none"></p>
     </div>
     <div id="tippaBody"></div>
     <div id="tippaSubmit"></div>
@@ -806,7 +808,7 @@ async function initFirebase(){
    ========================================================================= */
 const LS = {
   cfg:'tp_config', res:'tp_results', me:'tp_myname',
-  tips:'tp_tips', imp:'tp_imported', join:'tp_join'
+  tips:'tp_tips', imp:'tp_imported', join:'tp_join', rcode:'tp_rcode'
 };
 const $ = s=>document.querySelector(s);
 const $$ = s=>[...document.querySelectorAll(s)];
@@ -818,6 +820,7 @@ let config = load(LS.cfg) || null;
 let results = normalize(load(LS.res));
 let myTips  = normalize(load(LS.tips));
 let myName  = load(LS.me) || '';
+let myRcode = load(LS.rcode) || '';   // personlig återkomstkod (för att fortsätta på annan enhet)
 let imported= load(LS.imp) || [];
 
 function load(k){try{const v=localStorage.getItem(k);return v?JSON.parse(v):null;}catch(e){return null;}}
@@ -987,6 +990,11 @@ function poolRef(){ return fb.doc(fb.db,'pools',POOL_ID); }
 function tipsRef(id){ return fb.doc(fb.db,'pools',POOL_ID,'tips',id); }
 function secretRef(){ return fb.doc(fb.db,'pools',POOL_ID,'secret','host'); }
 function claimRef(){ return fb.doc(fb.db,'pools',POOL_ID,'claims',uid); }
+/* Personlig återkomst: hemlig kod per spelare (slug av namnet) och anspråk per enhet. */
+function nameSlug(name){ return (name||'').trim().toLowerCase().replace(/[^a-z0-9åäöéèü]+/g,'-').replace(/^-+|-+$/g,'')||'x'; }
+function tipSecretRef(slug){ return fb.doc(fb.db,'pools',POOL_ID,'tipsecret',slug); }
+function tipClaimRef(){ return fb.doc(fb.db,'pools',POOL_ID,'tipclaims',uid); }
+function genCode(){ const c='ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s=''; for(let i=0;i<5;i++) s+=c[Math.floor(Math.random()*c.length)]; return s; }
 
 async function cloudBoot(){
   if(!ONLINE) { setSyncBadge('offline'); return; }
@@ -1038,7 +1046,7 @@ function setSyncBadge(state){
 
 async function cloudSaveTips(){
   if(!ONLINE||!cloud.ready||!cloud.joined||!myName||!uid) return;
-  try{ await fb.setDoc(tipsRef(uid), {name:myName, tips:myTips, joinCode:cloud.code, updated:Date.now()}); }
+  try{ await fb.setDoc(tipsRef(uid), {name:myName, tips:myTips, joinCode:cloud.code, slug:nameSlug(myName), updated:Date.now()}); }
   catch(e){ console.error(e); toast('Kunde inte spara till molnet'); }
 }
 /* Endast ägaren får skriva turnering/facit. */
@@ -1281,7 +1289,10 @@ function renderSubmitBar(box, scope, complete, locked){
 }
 
 function renderTippa(){
-  $('#whoLabel').textContent = myName||'– sätt ditt namn –'; $('#playerName').value=myName;
+  $('#whoLabel').textContent = myName||'– sätt ditt namn –';
+  // Skriv bara över namnfältet när man faktiskt är med – annars raderas det man
+  // just skrivit om en molnuppdatering triggar en omritning (t.ex. vid återkomst).
+  if(myName) $('#playerName').value=myName;
   fixtureEditor($('#tippaBody'), myTips, !groupLocked(), 'group');
   renderSubmitBar($('#tippaSubmit'), 'group', groupComplete(), groupLocked());
 }
@@ -1882,20 +1893,66 @@ function nameTakenByOther(name){
   return Object.entries(cloud.players).some(([id,p])=>
     id!==uid && (p.name||'').trim().toLowerCase()===key);
 }
+/* Skapa den hemliga återkomstkoden (en gång per namn – kan inte skrivas över). */
+async function ensureTipSecret(code){
+  try{ await fb.setDoc(tipSecretRef(nameSlug(myName)), {code}); }
+  catch(e){ /* finns redan – behåll den ursprungliga koden */ }
+}
+function showResumeCode(){
+  const el=$('#resumeShow'); if(!el) return;
+  if(ONLINE && cloud.joined && myRcode){
+    el.style.display='';
+    el.innerHTML='Din återkomstkod: <b>'+escapeHtml(myRcode)+'</b> — spara den så kan du fortsätta tippa på en annan enhet med samma namn.';
+  }else{ el.style.display='none'; }
+}
+/* Fortsätt som en befintlig spelare på en ny enhet: bevisa återkomstkoden,
+   flytta över posten till den här enheten och behåll tipsen (och ev. lås). */
+async function reclaimEntry(name, poolcode, code){
+  if(!cloud.ready){ toast('Ingen anslutning'); return false; }
+  const ok=await cloudJoin(poolcode); if(!ok) return false;
+  const key=name.trim().toLowerCase();
+  const entry=Object.entries(cloud.players).find(([id,p])=> id!==uid && (p.name||'').trim().toLowerCase()===key);
+  if(!entry){ toast('Hittade ingen spelare med det namnet'); return false; }
+  const [oldId, oldP]=entry;
+  const slug=nameSlug(name);
+  try{
+    await fb.setDoc(tipClaimRef(), {slug, code});   // anspråk (slug + kod)
+    await fb.deleteDoc(tipsRef(oldId));             // nekas av regeln om koden är fel
+  }catch(e){
+    console.error(e); toast('Fel återkomstkod – kunde inte återuppta'); return false;
+  }
+  myName=name; save(LS.me,myName);
+  myRcode=code; save(LS.rcode,myRcode);
+  myTips=normalize(JSON.parse(JSON.stringify(oldP.tips)));   // ta med tips + lås
+  save(LS.tips,myTips);
+  delete cloud.players[oldId];
+  await cloudSaveTips();                            // skapar posten på den här enheten
+  renderAll(); showResumeCode();
+  toast('Återupptaget – välkommen tillbaka, '+myName);
+  return true;
+}
 $('#setName').onclick=async()=>{
   const v=$('#playerName').value.trim();
   if(!v){toast('Skriv ditt namn');return;}
+  const rcode=$('#resumeCode').value.trim();
   if(ONLINE){
     const code=$('#joinCode').value.trim();
     if(!code){toast('Skriv poolkoden');return;}
-    // Blockera dubbletter så två personer inte krockar i ställningen.
-    if(cloud.ready && nameTakenByOther(v)){ toast('Namnet "'+v+'" är upptaget – välj ett annat'); return; }
+    // Upptaget namn = antingen dubblett eller samma person på en ny enhet.
+    if(cloud.ready && nameTakenByOther(v)){
+      if(!rcode){ toast('Namnet är upptaget. Byter du enhet? Ange din återkomstkod – annars välj ett annat namn.'); return; }
+      await reclaimEntry(v, code, rcode);
+      return;
+    }
     const ok=await cloudJoin(code);
     if(!ok) return;
   }else{ cloud.joined=true; }
-  myName=v;save(LS.me,myName);
+  myName=v; save(LS.me,myName);
+  myRcode = rcode || myRcode || genCode(); save(LS.rcode, myRcode);
   await cloudSaveTips();
-  renderAll();toast('Välkommen, '+myName);
+  if(ONLINE && cloud.ready) await ensureTipSecret(myRcode);
+  $('#resumeCode').value='';
+  renderAll(); showResumeCode(); toast('Välkommen, '+myName);
 };
 $('#addGroup').onclick=()=>{const d=renderGroupsEditor._draft||(renderGroupsEditor._draft=[]);const nx=String.fromCharCode(65+d.length);d.push({name:nx,teams:[]});renderGroupsEditor();};
 $('#loadWC').onclick=()=>{renderGroupsEditor._draft=Object.entries(WC2026).map(([n,t])=>({name:n,teams:[...t]}));renderGroupsEditor();toast('VM-lag ifyllda');};
@@ -2030,7 +2087,7 @@ function renderJoinHint(){
   else { h.textContent='Skriv ditt namn och poolkoden du fått för att vara med.'; }
 }
 const _renderAll = renderAll;
-renderAll = function(){ _renderAll(); renderCloudState(); renderJoinHint(); applyHostVisibility(); };
+renderAll = function(){ _renderAll(); renderCloudState(); renderJoinHint(); applyHostVisibility(); showResumeCode(); };
 
 $('#hostLogin').onclick=async()=>{
   const c=$('#hostCodeIn').value.trim();
