@@ -194,6 +194,7 @@
   .fxmeta{display:flex;flex-direction:column;align-items:flex-start;gap:1px;line-height:1.15}
   .fxgrp{font-size:8.5px;text-transform:uppercase;letter-spacing:.1em;color:var(--chalk-dim);font-weight:700}
   .fxcell.hasacc .fxgrp{color:var(--acc)}
+  .fxday{font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--chalk-dim);font-weight:600}
   .fxtime{font-family:var(--mono);font-size:11px;color:var(--amber);font-weight:700;font-variant-numeric:tabular-nums}
   .fx{display:grid;grid-template-columns:1fr auto 1fr auto;align-items:center;gap:10px;padding:1px 0}
   .fx .team{font-weight:600;font-size:17px;color:var(--chalk)}
@@ -1184,7 +1185,7 @@ function fixtureEditor(container, store, editable, scope){
     } else if(!wrap){
       wrap=document.createElement('div');wrap.className='fixtures';container.appendChild(wrap);
     }
-    wrap.appendChild(fxRow(f, store, editable, scope==='ko'?rebuild:null));
+    wrap.appendChild(fxRow(f, store, editable, scope==='ko'?rebuild:null, byGroup));
   });
   // bonusfrågor hör till gruppspels-/huvudvyn, inte slutspelsfliken
   if(scope!=='ko' && config.bonus && config.bonus.length){
@@ -1203,16 +1204,19 @@ function fixtureEditor(container, store, editable, scope){
     });
   }
 }
-function fxRow(f, store, editable, rebuildKo){
+function fxRow(f, store, editable, rebuildKo, showDay){
   const bucket=f.bucket, storeKey=(f.koNr!=null?f.koNr:f.id);
   const cell=document.createElement('div');cell.className='fxcell';
   // group accent colour (group stage only)
   const gkey=(f.label||'').replace('Grupp ','');
   if(f.bucket==='matches'){ cell.style.setProperty('--acc', groupColor(gkey)); cell.classList.add('hasacc'); }
-  // meta line: group/round + kickoff time
+  // meta line: group/round + (dag när ingen dagsrubrik finns) + kickoff time
   const meta=document.createElement('div');meta.className='fxmeta';
   const clk=clockLabel(f.time);
-  meta.innerHTML=`<span class="fxgrp">${f.label}</span>`+(clk?`<span class="fxtime">${clk}</span>`:'');
+  let html=`<span class="fxgrp">${escapeHtml(f.label)}</span>`;
+  if(showDay && f.time) html+=`<span class="fxday">${escapeHtml(dayLabel(f.time))}</span>`;
+  if(clk) html+=`<span class="fxtime">${clk}</span>`;
+  meta.innerHTML=html;
   cell.appendChild(meta);
   // the match row itself
   const row=document.createElement('div');row.className='fx';
