@@ -370,6 +370,8 @@
 
   /* --- Matcher-fliken --- */
   .viewswitch{display:flex;gap:8px}
+  .sortbar{display:flex;align-items:center;gap:8px;margin:16px 2px 4px;flex-wrap:wrap}
+  .sortbar .sortlbl{font-size:11px;text-transform:uppercase;letter-spacing:.14em;color:var(--chalk-dim);font-weight:700;margin-right:2px}
   #matchPick{font-size:14px}
 
   .mhead{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:14px;padding:6px 0 10px}
@@ -574,6 +576,11 @@
       <summary>Grupptabeller <span class="gt-sub">utifrån dina tips</span></summary>
       <div id="groupTables"></div>
     </details>
+    <div class="sortbar" id="tippaSortBar">
+      <span class="sortlbl">Ordna efter</span>
+      <button class="btn sm" data-sort="time">Tid</button>
+      <button class="btn sm" data-sort="group">Grupp</button>
+    </div>
     <div id="tippaBody"></div>
     <div id="tippaSubmit"></div>
   </section>
@@ -835,7 +842,7 @@ async function initFirebase(){
    ========================================================================= */
 const LS = {
   cfg:'tp_config', res:'tp_results', me:'tp_myname',
-  tips:'tp_tips', imp:'tp_imported', join:'tp_join', rcode:'tp_rcode'
+  tips:'tp_tips', imp:'tp_imported', join:'tp_join', rcode:'tp_rcode', sort:'tp_sort'
 };
 const $ = s=>document.querySelector(s);
 const $$ = s=>[...document.querySelectorAll(s)];
@@ -848,6 +855,7 @@ let results = normalize(load(LS.res));
 let myTips  = normalize(load(LS.tips));
 let myName  = load(LS.me) || '';
 let myRcode = load(LS.rcode) || '';   // personlig återkomstkod (för att fortsätta på annan enhet)
+let groupSort = load(LS.sort) || 'time';   // 'time' | 'group' – ordning på Tippa
 let imported= load(LS.imp) || [];
 
 function load(k){try{const v=localStorage.getItem(k);return v?JSON.parse(v):null;}catch(e){return null;}}
@@ -1158,16 +1166,19 @@ function fixtureEditor(container, store, editable, scope){
   }
   // I slutspelet slås "vinnare av match X" upp mot store: alltså facit
   // för värdens Resultat-flik, eller spelarens egna tips för Tippa/Slutspel.
-  const fixtures=sortedFixtures(scope, scope==='ko'?store:undefined);
+  // Gruppspelet kan ordnas efter tid (default) eller grupp – spelaren väljer.
+  const byGroup = (scope==='group' && groupSort==='group');
+  const fixtures = byGroup ? allFixtures(scope) : sortedFixtures(scope, scope==='ko'?store:undefined);
   const rebuild=()=>fixtureEditor(container, store, editable, scope);
   const anyTime=fixtures.some(f=>f.time);
-  let curDay=null, wrap=null;
+  let curKey=null, wrap=null;
   fixtures.forEach(f=>{
-    const day=anyTime?dayLabel(f.time):null;
-    if(anyTime && day!==curDay){
-      curDay=day;
+    // Rubrik per grupp (t.ex. "Grupp A") eller per dag beroende på ordning.
+    const head = byGroup ? f.label : (anyTime ? dayLabel(f.time) : null);
+    if(head!==null && head!==curKey){
+      curKey=head;
       const gh=document.createElement('div');gh.className='grp-h';
-      gh.innerHTML=`<span>${day}</span>`;
+      gh.innerHTML=`<span>${escapeHtml(head)}</span>`;
       container.appendChild(gh);
       wrap=document.createElement('div');wrap.className='fixtures';container.appendChild(wrap);
     } else if(!wrap){
@@ -1320,9 +1331,17 @@ function renderTippa(){
   // Skriv bara över namnfältet när man faktiskt är med – annars raderas det man
   // just skrivit om en molnuppdatering triggar en omritning (t.ex. vid återkomst).
   if(myName) $('#playerName').value=myName;
+  renderSortBar();
   fixtureEditor($('#tippaBody'), myTips, !groupLocked(), 'group');
   renderSubmitBar($('#tippaSubmit'), 'group', groupComplete(), groupLocked());
   renderGroupTables();
+}
+function renderSortBar(){
+  const bar=$('#tippaSortBar'); if(!bar) return;
+  bar.style.display = (config && config.groups && config.groups.length) ? '' : 'none';
+  bar.querySelectorAll('button[data-sort]').forEach(b=>{
+    b.className = 'btn sm '+(groupSort===b.dataset.sort ? 'sig' : 'ghost');
+  });
 }
 /* Projicerad grupptabell utifrån spelarens egna tips (vanlig fotbollstabell). */
 function groupStandings(g){
@@ -2026,6 +2045,9 @@ $('#setName').onclick=async()=>{
   $('#resumeCode').value='';
   renderAll(); showResumeCode(); toast('Välkommen, '+myName);
 };
+$$('#tippaSortBar button[data-sort]').forEach(b=>b.onclick=()=>{
+  groupSort=b.dataset.sort; save(LS.sort, groupSort); renderTippa();
+});
 $('#addGroup').onclick=()=>{const d=renderGroupsEditor._draft||(renderGroupsEditor._draft=[]);const nx=String.fromCharCode(65+d.length);d.push({name:nx,teams:[]});renderGroupsEditor();};
 $('#loadWC').onclick=()=>{renderGroupsEditor._draft=Object.entries(WC2026).map(([n,t])=>({name:n,teams:[...t]}));renderGroupsEditor();toast('VM-lag ifyllda');};
 
