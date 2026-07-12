@@ -414,6 +414,28 @@
   .legend .sw.part{background:var(--amber)}
   .legend .sw.none{background:var(--miss)}
 
+  /* --- Grupptabeller (projicerade från tips), sida vid sida --- */
+  .gtwrap{padding:14px 16px}
+  .gtwrap>summary{cursor:pointer;font-family:var(--disp);text-transform:uppercase;letter-spacing:.02em;font-size:20px;list-style:none;display:flex;align-items:baseline;gap:8px}
+  .gtwrap>summary::-webkit-details-marker{display:none}
+  .gtwrap>summary::before{content:'▸';font-size:13px;color:var(--flood);transition:transform .15s}
+  .gtwrap[open]>summary::before{transform:rotate(90deg)}
+  .gtwrap>summary .gt-sub{font-family:var(--body);text-transform:none;letter-spacing:0;font-size:12px;color:var(--chalk-dim);font-weight:400}
+  .gtables{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;margin-top:14px}
+  .gtable{border:1px solid var(--line);border-radius:8px;overflow:hidden;background:rgba(0,0,0,.16)}
+  .gtable .gt-h{font-size:11px;text-transform:uppercase;letter-spacing:.14em;font-weight:700;
+    padding:7px 10px;border-left:3px solid var(--gc);color:var(--gc);background:rgba(0,0,0,.28)}
+  .gtable table{width:100%;border-collapse:collapse;font-size:12px}
+  .gtable th{font-size:9px;text-transform:uppercase;letter-spacing:.02em;color:var(--chalk-dim);font-weight:700;padding:5px 3px;text-align:right}
+  .gtable th.tm{text-align:left;padding-left:8px}
+  .gtable td{padding:5px 3px;text-align:right;font-variant-numeric:tabular-nums;color:var(--chalk-dim);border-top:1px solid var(--line)}
+  .gtable td.tm{text-align:left;padding-left:8px;color:var(--chalk);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:118px}
+  .gtable td.pts{font-weight:700;color:var(--chalk)}
+  .gtable td.pos{color:var(--chalk-dim);width:16px;padding-left:6px}
+  .gtable tr.adv td{background:rgba(94,224,138,.09)}
+  .gtable tr.adv td.pos{color:var(--win);font-weight:700}
+  .gtable .flag{font-size:13px;margin-right:5px}
+
   /* helhetsvyn */
   .gridscroll{overflow-x:auto;-webkit-overflow-scrolling:touch;
     background:linear-gradient(90deg,transparent 92%,rgba(0,0,0,.25))}
@@ -548,6 +570,10 @@
       <p class="hint" id="resumeShow" style="margin:8px 0 0;display:none"></p>
       <p class="hint" id="resumeHelp" style="margin:8px 0 0">Välj gärna en <b>återkomstkod</b> när du går med – då kan du fortsätta tippa på en annan enhet genom att ange samma namn och kod. Lämnar du fältet tomt skapas en kod åt dig som visas här.</p>
     </div>
+    <details class="card gtwrap" id="groupTablesWrap" open>
+      <summary>Grupptabeller <span class="gt-sub">utifrån dina tips</span></summary>
+      <div id="groupTables"></div>
+    </details>
     <div id="tippaBody"></div>
     <div id="tippaSubmit"></div>
   </section>
@@ -1226,7 +1252,7 @@ function queueSync(what){
   clearTimeout(_syncT);
   _syncT=setTimeout(()=>{ if(what==='tips') cloudSaveTips(); else cloudSavePool(); }, 700);
 }
-function liveScore(){ $$('.fxcell').forEach(r=>r._paint&&r._paint()); renderStandings(); renderMatcherIfVisible(); renderExport(); refreshSubmitBars(); }
+function liveScore(){ $$('.fxcell').forEach(r=>r._paint&&r._paint()); renderStandings(); renderMatcherIfVisible(); renderExport(); refreshSubmitBars(); renderGroupTables(); }
 /* Uppdatera skicka-in-knapparnas läge löpande när tips fylls i. */
 function refreshSubmitBars(){
   renderSubmitBar($('#tippaSubmit'), 'group', groupComplete(), groupLocked());
@@ -1296,6 +1322,46 @@ function renderTippa(){
   if(myName) $('#playerName').value=myName;
   fixtureEditor($('#tippaBody'), myTips, !groupLocked(), 'group');
   renderSubmitBar($('#tippaSubmit'), 'group', groupComplete(), groupLocked());
+  renderGroupTables();
+}
+/* Projicerad grupptabell utifrån spelarens egna tips (vanlig fotbollstabell). */
+function groupStandings(g){
+  const rows=g.teams.map(t=>({team:t,P:0,W:0,D:0,L:0,GF:0,GA:0,GD:0,Pts:0}));
+  const idx={}; rows.forEach(r=>idx[r.team]=r);
+  groupFixtures().filter(f=>f.group===g.name).forEach(f=>{
+    const t=myTips.matches[f.key];
+    if(!t||t.h===''||t.h==null||t.a===''||t.a==null) return;
+    const rh=idx[f.home], ra=idx[f.away]; if(!rh||!ra) return;
+    const h=+t.h, a=+t.a;
+    rh.P++; ra.P++; rh.GF+=h; rh.GA+=a; ra.GF+=a; ra.GA+=h;
+    if(h>a){ rh.W++; ra.L++; rh.Pts+=3; }
+    else if(h<a){ ra.W++; rh.L++; ra.Pts+=3; }
+    else { rh.D++; ra.D++; rh.Pts++; ra.Pts++; }
+  });
+  rows.forEach(r=>r.GD=r.GF-r.GA);
+  // Sortera på poäng, sedan målskillnad och gjorda mål (vanliga särskiljare).
+  rows.sort((x,y)=> y.Pts-x.Pts || y.GD-x.GD || y.GF-x.GF || x.team.localeCompare(y.team,'sv'));
+  return rows;
+}
+function renderGroupTables(){
+  const box=$('#groupTables'), wrap=$('#groupTablesWrap'); if(!box) return;
+  const groups=(config&&config.groups)?config.groups.filter(g=>g.teams&&g.teams.length):[];
+  if(!groups.length){ if(wrap) wrap.style.display='none'; return; }
+  if(wrap) wrap.style.display='';
+  const H=(k,t,cls)=>`<th class="${cls||''}" title="${t}">${k}</th>`;
+  let html='<div class="gtables">';
+  groups.forEach(g=>{
+    html+=`<div class="gtable" style="--gc:${groupColor(g.name)}"><div class="gt-h">Grupp ${escapeHtml(g.name)}</div>`;
+    html+='<table><thead><tr><th class="pos"></th>'+H('Lag','Lag','tm')+H('V','Vinster')+H('O','Oavgjorda')+H('F','Förluster')+H('GM','Gjorda mål')+H('IM','Insläppta mål')+H('±','Målskillnad')+H('P','Poäng')+'</tr></thead><tbody>';
+    groupStandings(g).forEach((r,i)=>{
+      const fl=flagFor(r.team), gd=(r.GD>0?'+':'')+r.GD;
+      html+=`<tr class="${i<2?'adv':''}"><td class="pos">${i+1}</td>`+
+            `<td class="tm">${fl?`<span class="flag">${fl}</span>`:''}${escapeHtml(r.team)}</td>`+
+            `<td>${r.W}</td><td>${r.D}</td><td>${r.L}</td><td>${r.GF}</td><td>${r.GA}</td><td>${gd}</td><td class="pts">${r.Pts}</td></tr>`;
+    });
+    html+='</tbody></table></div>';
+  });
+  box.innerHTML=html+'</div>';
 }
 function renderSlutspel(){
   renderBracket($('#slutspelBody'), myTips, !koLocked());
