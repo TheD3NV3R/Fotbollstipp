@@ -1491,7 +1491,7 @@ function bracketCard(m, store, editable, container){
   // Straffväljare – visas bara när tipset är oavgjort. Låter spelaren peka ut
   // vem som går vidare efter förlängning/straffar, så trädet kan fortsätta.
   const pen=document.createElement('div');pen.className='bc-pen';
-  pen.innerHTML='<span class="bc-pen-lbl">Vidare på straffar</span>';
+  pen.innerHTML='<span class="bc-pen-lbl">Vidare efter förlängning/straffar</span>';
   const penH=document.createElement('button');penH.type='button';penH.className='bc-pen-btn';penH.textContent=homeName;
   const penA=document.createElement('button');penA.type='button';penA.className='bc-pen-btn';penA.textContent=awayName;
   if(!editable){ penH.disabled=true; penA.disabled=true; }
