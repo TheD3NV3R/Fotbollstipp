@@ -1811,9 +1811,25 @@ function buildConfigFromForm(){
 
 /* ---- Slutspelsbyggare (rullistor med lag från gruppspelet) ---- */
 const KO_ROUNDS=['Sextondelsfinal','Åttondelsfinal','Kvartsfinal','Semifinal','Bronsmatch','Final'];
+/* Sortera slutspelsmatcherna efter rond (tidigast först) och numrera om
+   M1..Mn i den ordningen. Vinnare-/Förlorare-länkarna (W:/L:) map­pas om så
+   att de fortsätter peka på rätt match. Så en sextondelsfinal som läggs till
+   efter en åttondelsfinal flyttas upp och får ett lägre matchnummer. */
+function sortKoDraft(draft){
+  if(!draft || !draft.length) return draft;
+  draft.sort((a,b)=>koRoundIndex(a.round)-koRoundIndex(b.round));  // stabil sort
+  const map={};
+  draft.forEach((m,i)=>{ map[String(m.nr)]=String(i+1); });
+  const remap=tok=>{ if(!tok) return tok; const [k,n]=String(tok).split(':');
+    return ((k==='W'||k==='L')&&map[n]) ? k+':'+map[n] : tok; };
+  draft.forEach(m=>{ m.home=remap(m.home); m.away=remap(m.away); });
+  draft.forEach((m,i)=>{ m.nr=String(i+1); });
+  return draft;
+}
 function renderKoEditor(){
   const box=$('#koEditor'); if(!box) return;
   const draft = renderKoEditor._draft || (renderKoEditor._draft = (config? JSON.parse(JSON.stringify(config.ko||[])) : []));
+  sortKoDraft(draft);
   const teams = allTeams();
   if(!teams.length){ box.innerHTML='<p class="hint" style="margin:0">Lägg till grupper och lag först, så dyker lagen upp i rullistorna.</p>'; return; }
   if(!draft.length){ box.innerHTML='<p class="hint" style="margin:0">Inga slutspelsmatcher än. Klicka "Lägg till match" när gruppspelet är klart.</p>'; return; }
@@ -1825,7 +1841,8 @@ function renderKoEditor(){
     KO_ROUNDS.forEach(r=>{ const o=document.createElement('option');o.value=r;o.textContent=r;
       if((m.round||'')===r) o.selected=true; rd.appendChild(o); });
     if(!m.round) m.round=KO_ROUNDS[0];
-    rd.onchange=()=>{ m.round=rd.value; };
+    // Byter man rond kan matchen behöva flytta – sortera och numrera om.
+    rd.onchange=()=>{ m.round=rd.value; renderKoEditor._lastRound=rd.value; renderKoEditor(); };
 
     // Ett lag kan antingen väljas direkt (t.ex. sextondelsfinal, där laget
     // är känt från gruppspelet) eller länkas till vinnaren/förloraren av en
@@ -1881,11 +1898,10 @@ function renderKoEditor(){
 $('#addKo').onclick=()=>{
   if(!allTeams().length){ toast('Lägg till lag först'); return; }
   const d = renderKoEditor._draft || (renderKoEditor._draft=[]);
-  const last = d[d.length-1];
-  // Nästa lediga nummer = högsta befintliga + 1, så nr aldrig krockar även
-  // efter att en match tagits bort (annars kunde två matcher få samma M#).
+  // Tillfälligt unikt nr; sortKoDraft numrerar ändå om M1..Mn efter rond.
   const maxNr = d.reduce((mx,m)=>Math.max(mx, +m.nr||0), 0);
-  d.push({nr:String(maxNr+1), round:last?last.round:KO_ROUNDS[0], homeTeam:'', home:'', awayTeam:'', away:''});
+  const round = renderKoEditor._lastRound || KO_ROUNDS[0];
+  d.push({nr:String(maxNr+1), round, homeTeam:'', home:'', awayTeam:'', away:''});
   renderKoEditor();
 };
 $('#clearKo').onclick=()=>{
