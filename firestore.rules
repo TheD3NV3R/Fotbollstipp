@@ -135,11 +135,16 @@ service cloud.firestore {
       }
 
       // Hemlig återkomstkod per spelare (nyckel = slug av namnet). Skrivs en
-      // gång, kan aldrig läsas av klienten (bara av reglerna via get()).
+      // gång vid tippstart, kan aldrig läsas av klienten (bara av reglerna via
+      // get()). Poolens ägare (värden) får skriva över koden – så en spelare som
+      // glömt sin kan få en ny av värden – men kan fortfarande inte läsa den.
       match /tipsecret/{slug} {
+        function poolOwner(){ return get(/databases/$(database)/documents/pools/$(poolId)).data.ownerUid; }
         allow read: if false;
         allow create: if signedIn() && request.resource.data.code is string;
-        allow update, delete: if false;
+        allow update: if signedIn() && poolOwner() == request.auth.uid
+                      && request.resource.data.code is string;
+        allow delete: if false;
       }
 
       // Anspråk vid enhetsbyte: skrivs av den som försöker återuppta, läses bara

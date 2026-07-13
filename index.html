@@ -312,15 +312,17 @@
   /* --- Standings: league table --- */
   .standings-count{font-size:11px;text-transform:uppercase;letter-spacing:.14em;color:var(--chalk-dim);font-weight:700;margin:0 0 10px}
   table.tbl td.rmcell{width:auto;white-space:nowrap;text-align:right;padding:4px}
-  .rmbtn,.unlockbtn{
+  .rmbtn,.unlockbtn,.keybtn{
     width:26px;height:26px;line-height:1;border-radius:6px;cursor:pointer;
     background:transparent;color:var(--miss);border:1px solid var(--line);
     font-size:14px;font-weight:700;transition:all .15s;
   }
-  .unlockbtn{margin-right:6px}
+  .unlockbtn,.keybtn{margin-right:6px}
+  .keybtn{font-size:14px}
   .rmbtn{font-size:16px}
   .rmbtn:hover{color:var(--red);border-color:var(--red);background:rgba(224,52,43,.12)}
   .unlockbtn:hover{border-color:var(--flood);background:rgba(216,255,79,.14)}
+  .keybtn:hover{border-color:var(--amber);background:rgba(255,179,31,.14)}
   .lockmark{font-size:11px;opacity:.85}
   table.tbl{width:100%;border-collapse:collapse;font-size:14px}
   table.tbl th{
@@ -1617,6 +1619,22 @@ async function unlockCloudPlayer(pid, name){
   }
 }
 function playerLocked(tips){ return !!(tips && tips.locked && (tips.locked.group || tips.locked.ko)); }
+/* Värden sätter en NY återkomstkod åt en spelare (som glömt sin). Den gamla
+   koden går inte att läsa – den skrivs bara över. Tipsen rörs inte. */
+async function resetResumeCode(pid, name){
+  if(!fb || !cloud.isHost){ toast('Endast värden kan byta kod'); return; }
+  const code=prompt('Ny återkomstkod för '+name+' (spara och ge till spelaren):', genCode());
+  if(code==null) return;
+  const c=code.trim();
+  if(!c){ toast('Skriv en kod'); return; }
+  try{
+    await fb.setDoc(tipSecretRef(nameSlug(name)), {code:c});
+    toast('Ny återkomstkod för '+name+': '+c);
+  }catch(e){
+    console.error(e);
+    toast('Kunde inte byta kod – kontrollera Firestore-reglerna');
+  }
+}
 
 function renderStandings(){
   const box=$('#standings');
@@ -1637,9 +1655,10 @@ function renderStandings(){
     const lock = r.locked ? ' <span class="lockmark" title="Har skickat in">🔒</span>' : '';
     let actions='';
     if(showActions){
+      const kb = canRemove(r) ? `<button class="keybtn" data-pid="${escapeHtml(String(r.pid))}" data-name="${escapeHtml(r.name)}" title="Byt återkomstkod (om spelaren glömt sin)">🔑</button>` : '';
       const ub = canUnlock(r) ? `<button class="unlockbtn" data-pid="${escapeHtml(String(r.pid))}" data-name="${escapeHtml(r.name)}" title="Lås upp – låt spelaren tippa igen">🔓</button>` : '';
       const rb = canRemove(r) ? `<button class="rmbtn" data-pid="${escapeHtml(String(r.pid))}" data-name="${escapeHtml(r.name)}" title="Ta bort spelare">×</button>` : '';
-      actions=`<td class="rmcell">${ub}${rb}</td>`;
+      actions=`<td class="rmcell">${kb}${ub}${rb}</td>`;
     }
     html+=`<tr class="${r.me?'me':''}"><td class="num">${pill}</td><td>${escapeHtml(r.name)}${r.me?' <span class="badge">du</span>':''}${lock}</td><td class="num">${r.pts}</td>${actions}</tr>`;
   });
@@ -1647,6 +1666,7 @@ function renderStandings(){
   box.innerHTML=html;
   box.querySelectorAll('.rmbtn').forEach(b=>{ b.onclick=()=>removeCloudPlayer(b.dataset.pid, b.dataset.name); });
   box.querySelectorAll('.unlockbtn').forEach(b=>{ b.onclick=()=>unlockCloudPlayer(b.dataset.pid, b.dataset.name); });
+  box.querySelectorAll('.keybtn').forEach(b=>{ b.onclick=()=>resetResumeCode(b.dataset.pid, b.dataset.name); });
 }
 function escapeHtml(s){return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 
