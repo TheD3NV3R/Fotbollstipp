@@ -957,6 +957,21 @@ function sortedFixtures(scope, ctx){
     return x.i-y.i;
   }).map(o=>o.f);
 }
+/* Grupperat efter grupp (i turneringsordning) men sorterat på tid inom varje
+   grupp. Matcher utan tid hamnar sist i sin grupp i naturlig ordning. */
+function fixturesByGroup(scope){
+  const list=allFixtures(scope);
+  const order={};
+  list.forEach(f=>{ if(!(f.label in order)) order[f.label]=Object.keys(order).length; });
+  return list.map((f,i)=>({f,i})).sort((x,y)=>{
+    const g=order[x.f.label]-order[y.f.label]; if(g) return g;
+    const tx=x.f.time, ty=y.f.time;
+    if(tx&&ty) return tx<ty?-1:(tx>ty?1:x.i-y.i);
+    if(tx&&!ty) return -1;
+    if(!tx&&ty) return 1;
+    return x.i-y.i;
+  }).map(o=>o.f);
+}
 /* Human day label from an ISO-ish datetime-local value (YYYY-MM-DDTHH:MM) */
 const DAYS=['sön','mån','tis','ons','tors','fre','lör'];
 const MONTHS=['jan','feb','mar','apr','maj','jun','jul','aug','sep','okt','nov','dec'];
@@ -1169,7 +1184,7 @@ function fixtureEditor(container, store, editable, scope){
   // för värdens Resultat-flik, eller spelarens egna tips för Tippa/Slutspel.
   // Gruppspelet kan ordnas efter tid (default) eller grupp – spelaren väljer.
   const byGroup = (scope==='group' && groupSort==='group');
-  const fixtures = byGroup ? allFixtures(scope) : sortedFixtures(scope, scope==='ko'?store:undefined);
+  const fixtures = byGroup ? fixturesByGroup(scope) : sortedFixtures(scope, scope==='ko'?store:undefined);
   const rebuild=()=>fixtureEditor(container, store, editable, scope);
   const anyTime=fixtures.some(f=>f.time);
   let curKey=null, wrap=null;
