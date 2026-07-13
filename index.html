@@ -291,6 +291,15 @@
     padding:2px 0;color:var(--miss);border-top:1px solid var(--line);
   }
   .bc-res.scored{color:var(--pitch);background:var(--flood)}
+  .bc-pen{border-top:1px solid var(--line);padding:6px 8px;display:flex;flex-wrap:wrap;align-items:center;gap:5px}
+  .bc-pen-lbl{flex:1 0 100%;font-size:8.5px;text-transform:uppercase;letter-spacing:.1em;color:var(--chalk-dim);font-weight:700;margin-bottom:1px}
+  .bc-pen-btn{
+    flex:1;min-width:0;padding:5px 6px;border-radius:6px;cursor:pointer;
+    font-size:11.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    background:transparent;color:var(--chalk-dim);border:1px solid var(--line);transition:all .15s;
+  }
+  .bc-pen-btn:hover{color:var(--chalk);border-color:var(--line-strong)}
+  .bc-pen-btn.sel{color:var(--pitch);background:var(--win);border-color:var(--win);font-weight:700}
   .bracket-lines{position:absolute;left:0;top:0;pointer-events:none;z-index:0}
   .bracket-lines path{fill:none;stroke:var(--line-strong);stroke-width:2}
   .bracket-lines path.loser{stroke:var(--bronze);stroke-dasharray:3 4;opacity:.7}
@@ -915,10 +924,16 @@ function koSide(m, side, ctx, seen){
   if(!ref) return koLabel(token);
   const refHome = koSide(ref,'home',ctx,seen), refAway = koSide(ref,'away',ctx,seen);
   const r = ctx.ko && ctx.ko[ref.nr];
-  // Oavgjort går inte att avgöra av bara målen (straffar okänt) – räknas som ej klart.
-  if(!r || r.h===''||r.h==null||r.a===''||r.a==null || +r.h===+r.a) return koLabel(token);
+  if(!r || r.h===''||r.h==null||r.a===''||r.a==null) return koLabel(token);
   const h=+r.h, a=+r.a;
-  const winner = h>a ? refHome : refAway, loser = h>a ? refAway : refHome;
+  let winnerHome;
+  if(h>a) winnerHome=true;
+  else if(h<a) winnerHome=false;
+  // Oavgjort: avgörs av vald straffvinnare (pen: 'h'/'a'), annars ej klart.
+  else if(r.pen==='h') winnerHome=true;
+  else if(r.pen==='a') winnerHome=false;
+  else return koLabel(token);
+  const winner = winnerHome ? refHome : refAway, loser = winnerHome ? refAway : refHome;
   return kind==='W' ? winner : loser;
 }
 /* Har värden lagt in slutspelet än? */
@@ -1307,13 +1322,19 @@ function groupComplete(){
 }
 function koComplete(){
   if(!config || !hasKO()) return false;
-  return config.ko.every(m=>filled(myTips.ko[m.nr]));
+  return config.ko.every(m=>{
+    const t=myTips.ko[m.nr];
+    if(!filled(t)) return false;
+    // Oavgjort tips måste ha en straffvinnare vald.
+    if(+t.h===+t.a && t.pen!=='h' && t.pen!=='a') return false;
+    return true;
+  });
 }
 function submitScope(scope){
   const isGroup = scope==='group';
   if(!myName){ toast('Sätt ditt namn först'); return; }
   if(isGroup ? !groupComplete() : !koComplete()){
-    toast(isGroup ? 'Tippa alla gruppmatcher (och bonusfrågor) först' : 'Tippa alla slutspelsmatcher först');
+    toast(isGroup ? 'Tippa alla gruppmatcher (och bonusfrågor) först' : 'Tippa alla slutspelsmatcher först – välj vem som går vidare vid oavgjort');
     return;
   }
   const label = isGroup ? 'gruppspelstipsen' : 'slutspelstipsen';
@@ -1338,7 +1359,7 @@ function renderSubmitBar(box, scope, complete, locked){
     info.textContent = complete
       ? 'Allt ifyllt. När du skickat in låses tipset och kan inte ändras.'
       : (scope==='group' ? 'Fyll i alla matcher och bonusfrågor för att kunna skicka in.'
-                         : 'Fyll i alla slutspelsmatcher för att kunna skicka in.');
+                         : 'Fyll i alla slutspelsmatcher (och välj vidare vid oavgjort) för att kunna skicka in.');
     const btn=document.createElement('button');btn.className='btn sig big';
     btn.textContent = scope==='group' ? 'Skicka in gruppspelstips' : 'Skicka in slutspelstips';
     btn.disabled = !complete;
@@ -1444,6 +1465,7 @@ function renderBracket(container, store, editable){
 function bracketCard(m, store, editable, container){
   const card=document.createElement('div');card.className='bracket-card';card.dataset.nr=m.nr;
   const cur=(store.ko&&store.ko[m.nr])||{h:'',a:''};
+  const homeName=koSide(m,'home',store), awayName=koSide(m,'away',store);
   const inputs={};
   const mkRow=(side)=>{
     const isHome=side==='home';
@@ -1466,11 +1488,28 @@ function bracketCard(m, store, editable, container){
   card.appendChild(mkRow('away'));
   const res=document.createElement('div');res.className='bc-res';card.appendChild(res);
 
+  // Straffväljare – visas bara när tipset är oavgjort. Låter spelaren peka ut
+  // vem som går vidare efter förlängning/straffar, så trädet kan fortsätta.
+  const pen=document.createElement('div');pen.className='bc-pen';
+  pen.innerHTML='<span class="bc-pen-lbl">Vidare på straffar</span>';
+  const penH=document.createElement('button');penH.type='button';penH.className='bc-pen-btn';penH.textContent=homeName;
+  const penA=document.createElement('button');penA.type='button';penA.className='bc-pen-btn';penA.textContent=awayName;
+  if(!editable){ penH.disabled=true; penA.disabled=true; }
+  pen.append(penH,penA); card.appendChild(pen);
+
   function paint(){
     const h=inputs.home.value, a=inputs.away.value;
     const both = h!==''&&a!==''&&h!=null&&a!=null;
-    card._row_home.classList.toggle('winner', both && +h>+a);
-    card._row_away.classList.toggle('winner', both && +a>+h);
+    const draw = both && +h===+a;
+    const curPen=(store.ko&&store.ko[m.nr]&&store.ko[m.nr].pen)||'';
+    pen.style.display = (draw && editable) ? '' : 'none';
+    penH.classList.toggle('sel', curPen==='h');
+    penA.classList.toggle('sel', curPen==='a');
+    // Vinnare: mål avgör, vid oavgjort straffvalet.
+    const winH = draw ? curPen==='h' : (both && +h>+a);
+    const winA = draw ? curPen==='a' : (both && +a>+h);
+    card._row_home.classList.toggle('winner', winH);
+    card._row_away.classList.toggle('winner', winA);
     if(store===results){ res.style.display='none'; return; }
     const fac=results.ko&&results.ko[m.nr];
     if(!fac||fac.h===''||fac.h==null){ res.style.display='none'; return; }
@@ -1479,14 +1518,23 @@ function bracketCard(m, store, editable, container){
   }
   function commit(){
     store.ko=store.ko||{};
-    store.ko[m.nr]={h:inputs.home.value===''?'':+inputs.home.value, a:inputs.away.value===''?'':+inputs.away.value};
+    const prev=store.ko[m.nr]||{};
+    store.ko[m.nr]={h:inputs.home.value===''?'':+inputs.home.value, a:inputs.away.value===''?'':+inputs.away.value, pen:prev.pen};
     persist(store); liveScore(); paint();
   }
+  const rebuild=()=>renderBracket(container, store, editable);
+  function setPen(v){
+    store.ko=store.ko||{};
+    const prev=store.ko[m.nr]||{h:'',a:''};
+    store.ko[m.nr]={...prev, pen:v};
+    persist(store); liveScore(); rebuild();   // uppdatera nästa runda i trädet
+  }
+  penH.onclick=()=>setPen('h');
+  penA.onclick=()=>setPen('a');
   inputs.home.addEventListener('input',commit);
   inputs.away.addEventListener('input',commit);
   // Vid commit (blur/enter) kan vinnaren ha ändrats → bygg om trädet så att
   // nästa rundas lag uppdateras, med bevarad scroll-position.
-  const rebuild=()=>renderBracket(container, store, editable);
   inputs.home.addEventListener('change',rebuild);
   inputs.away.addEventListener('change',rebuild);
   paint();
