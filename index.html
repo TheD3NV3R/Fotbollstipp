@@ -2087,35 +2087,63 @@ function parseCSVLine(line, delim){
   return out.map(s=>s.trim());
 }
 function normDT(dateStr, timeStr, dtStr){
-  let s=(dtStr||'').trim().replace(' ','T');
-  if(!s){ const d=(dateStr||'').trim(), t=(timeStr||'').trim(); if(!d||!t) return ''; s=d+'T'+t; }
   const p2=n=>String(n).padStart(2,'0');
+  let s=(dtStr||'').trim();
+  // Absolut tidpunkt (UTC "Z" eller offset som +02:00) -> konvertera till lokal tid.
+  if(s && /(z|[+-]\d{2}:?\d{2})$/i.test(s)){
+    const d=new Date(s);
+    if(!isNaN(d)) return `${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}T${p2(d.getHours())}:${p2(d.getMinutes())}`;
+  }
+  s=s.replace(' ','T');
+  if(!s){ const dd=(dateStr||'').trim(), tt=(timeStr||'').trim(); if(!dd||!tt) return ''; s=dd+'T'+tt; }
   let m=s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})[T ](\d{1,2}):(\d{2})/);   // YYYY-MM-DD HH:MM
   if(m) return `${m[1]}-${p2(m[2])}-${p2(m[3])}T${p2(m[4])}:${m[5]}`;
   m=s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})[T ](\d{1,2}):(\d{2})/);        // DD/MM/YYYY HH:MM
   if(m) return `${m[3]}-${p2(m[2])}-${p2(m[1])}T${p2(m[4])}:${m[5]}`;
   return '';
 }
+/* Vanliga engelska landsnamn -> appens svenska namn (så flaggor m.m. funkar). */
+const TEAM_SV={
+  'mexico':'Mexiko','south africa':'Sydafrika','korea republic':'Sydkorea','south korea':'Sydkorea','czechia':'Czechia',
+  'canada':'Kanada','switzerland':'Schweiz','bosnia and herzegovina':'Bosnien-Herzigovina','qatar':'Qatar',
+  'brazil':'Brasilien','morocco':'Marocko','scotland':'Skottland','haiti':'Haiti',
+  'united states':'USA','usa':'USA','australia':'Australien','paraguay':'Paraguay','turkiye':'Turkiet','turkey':'Turkiet',
+  'germany':'Tyskland',"cote d'ivoire":'Elfenbenskusten','ivory coast':'Elfenbenskusten','ecuador':'Ecuador','curacao':'Curaçao',
+  'netherlands':'Nederländerna','japan':'Japan','sweden':'Sverige','tunisia':'Tunisien',
+  'belgium':'Belgien','egypt':'Egypten','ir iran':'Iran','iran':'Iran','new zealand':'Nya Zeeland',
+  'spain':'Spanien','cabo verde':'Kap Verde','cape verde':'Kap Verde','uruguay':'Uruguay','saudi arabia':'Saudiarabien',
+  'france':'Frankrike','norway':'Norge','senegal':'Senegal','iraq':'Irak',
+  'argentina':'Argentina','austria':'Österrike','algeria':'Algeriet','jordan':'Jordanien',
+  'colombia':'Colombia','portugal':'Portugal','congo dr':'Kongo','dr congo':'Kongo','uzbekistan':'Uzbekistan',
+  'england':'England','croatia':'Kroatien','ghana':'Ghana','panama':'Panama'
+};
+function toSvTeam(name){ const s=(name||'').trim(); return TEAM_SV[s.toLowerCase()] || s; }
 function parseScheduleCSV(text){
   const lines=text.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
   if(!lines.length) return {groups:[], times:{}, count:0};
   const delim = (lines[0].split(';').length > lines[0].split(',').length) ? ';'
               : (lines[0].split('\t').length > lines[0].split(',').length) ? '\t' : ',';
-  const alias={grupp:'g',group:'g',pool:'g',hemma:'h',home:'h',hemmalag:'h',lag1:'h',
-               borta:'a',away:'a',bortalag:'a',lag2:'a',datum:'d',date:'d',
-               tid:'t',time:'t',klockan:'t',avspark:'t',starttid:'dt',datetime:'dt',kickoff:'dt',tidpunkt:'dt'};
+  // Rubriker jämförs normaliserat (gemener, bara bokstäver/siffror) så t.ex.
+  // "home_team", "Home Team" och "kickoff_utc" känns igen.
+  const norm=s=>s.toLowerCase().replace(/[^a-z0-9]/g,'');
+  const alias={grupp:'g',group:'g',pool:'g',
+               hemma:'h',home:'h',hometeam:'h',hemmalag:'h',lag1:'h',
+               borta:'a',away:'a',awayteam:'a',bortalag:'a',lag2:'a',
+               datum:'d',date:'d',
+               tid:'t',time:'t',klockan:'t',avspark:'t',
+               starttid:'dt',datetime:'dt',kickoff:'dt',kickoffutc:'dt',kickofftime:'dt',utckickoff:'dt',tidpunkt:'dt'};
   let cols={g:0,h:1,a:2,d:3,t:4,dt:-1};          // förvald ordning om ingen rubrik
   let start=0;
-  const first=parseCSVLine(lines[0], delim).map(s=>s.toLowerCase());
-  if(first.some(c=>alias[c])){                    // rubrikrad finns
+  const first=parseCSVLine(lines[0], delim);
+  if(first.some(c=>alias[norm(c)])){              // rubrikrad finns
     cols={g:-1,h:-1,a:-1,d:-1,t:-1,dt:-1};
-    first.forEach((c,i)=>{ if(alias[c]!=null) cols[alias[c]]=i; });
+    first.forEach((c,i)=>{ const k=alias[norm(c)]; if(k!=null) cols[k]=i; });
     start=1;
   }
   const groups=[], gmap={}, times={}; let count=0;
   for(let i=start;i<lines.length;i++){
     const r=parseCSVLine(lines[i], delim);
-    const g=(r[cols.g]||'').trim(), h=(r[cols.h]||'').trim(), a=(r[cols.a]||'').trim();
+    const g=(r[cols.g]||'').trim(), h=toSvTeam(r[cols.h]||''), a=toSvTeam(r[cols.a]||'');
     if(!g||!h||!a) continue;
     if(!gmap[g]){ gmap[g]={name:g,teams:[]}; groups.push(gmap[g]); }
     if(!gmap[g].teams.includes(h)) gmap[g].teams.push(h);
@@ -2124,6 +2152,7 @@ function parseScheduleCSV(text){
     if(dt){ times[`${g}|${h}|${a}`]=dt; times[`${g}|${a}|${h}`]=dt; }  // båda ordningarna
     count++;
   }
+  groups.sort((x,y)=>x.name.localeCompare(y.name,'sv'));   // A, B, C, ...
   return {groups, times, count};
 }
 function importScheduleCSV(text){
